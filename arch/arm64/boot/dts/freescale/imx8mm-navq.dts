@@ -208,6 +208,7 @@
 	pm-ignore-notify;
 	keep-power-in-suspend;
 	non-removable;
+	no-sd-uhs-sdr104;
 	status = "okay";
 };
 
