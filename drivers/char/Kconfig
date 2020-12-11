@@ -442,6 +442,17 @@ config RAW_DRIVER
           Applications should preferably open the device (eg /dev/hda1)
           with the O_DIRECT flag.
 
+config MAGSTRIPE
+	tristate "Neuron magstripe reader support through GPIO"
+	default n
+	help
+	   This driver enables support for a Neuron MCR-370T-1R-xxxx
+	   insertion-style magnetic stripe card reader, connected via
+	   GPIO. GPIO pin assignments are defined through the device tree.
+	   Only a single instance is currently supported.
+
+	   If compiled as a module, it will be named magdecode.ko
+
 config MAX_RAW_DEVS
 	int "Maximum number of RAW devices to support (1-65536)"
 	depends on RAW_DRIVER
@@ -521,6 +532,21 @@ config DEVPORT
 
 source "drivers/s390/char/Kconfig"
 
+config SAS
+	tristate "Slot Accounting Service driver"
+	default n
+	help
+	   This driver enables support for a 9-bit serial driver that
+	   uses MARK/SPACE parity to frame messages for the Slot Accounting
+	   System (SAS) protocol.
+
+	   If compiled as a module, it will be named sas.ko
+
+config SAS_PARTIAL_RX
+	bool "Return received character without regard to message boundaries"
+	depends on SAS
+	default n
+
 source "drivers/char/xillybus/Kconfig"
 
 config ADI
@@ -536,6 +562,11 @@ config ADI
 	  driver include crash and makedumpfile.
 
 source "drivers/char/imx_amp/Kconfig"
+
+config DUMMY_I2C_DEVICE
+	tristate "dummy clock/regulator/gpio consumer"
+	depends on I2C
+
 endmenu
 
 config RANDOM_TRUST_CPU

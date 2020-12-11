@@ -1948,12 +1948,9 @@ static irqreturn_t udc_irq(struct ci_hdrc *ci)
 	if (ci == NULL)
 		return IRQ_HANDLED;
 
-	spin_lock(&ci->lock);
-
 	if (ci->platdata->flags & CI_HDRC_REGS_SHARED) {
 		if (hw_read(ci, OP_USBMODE, USBMODE_CM) !=
 				USBMODE_CM_DC) {
-			spin_unlock(&ci->lock);
 			return IRQ_NONE;
 		}
 	}
@@ -2001,7 +1998,6 @@ static irqreturn_t udc_irq(struct ci_hdrc *ci)
 	} else {
 		retval = IRQ_NONE;
 	}
-	spin_unlock(&ci->lock);
 
 	return retval;
 }
@@ -2138,10 +2134,12 @@ static int udc_id_switch_for_device(struct ci_hdrc *ci)
 		pinctrl_select_state(ci->platdata->pctl,
 				     ci->platdata->pins_device);
 
-	if (ci->is_otg)
+	if (ci->is_otg) {
 		/* Clear and enable BSV irq */
 		hw_write_otgsc(ci, OTGSC_BSVIS | OTGSC_BSVIE,
 					OTGSC_BSVIS | OTGSC_BSVIE);
+		ci_otg_queue_work(ci);
+	}
 
 	return 0;
 }
@@ -2176,9 +2174,11 @@ static void udc_suspend_for_power_lost(struct ci_hdrc *ci)
 /* Power lost with device mode */
 static void udc_resume_from_power_lost(struct ci_hdrc *ci)
 {
-	if (ci->is_otg)
+	if (ci->is_otg) {
 		hw_write_otgsc(ci, OTGSC_BSVIS | OTGSC_BSVIE,
 					OTGSC_BSVIS | OTGSC_BSVIE);
+		ci_otg_queue_work(ci);
+	}
 }
 
 static void udc_suspend(struct ci_hdrc *ci)

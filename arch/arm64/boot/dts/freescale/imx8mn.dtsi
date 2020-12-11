@@ -41,6 +41,7 @@
 		spi2 = &ecspi3;
 		isi0 = &isi_0;
 		csi0 = &mipi_csi_1;
+		wdog0 = &wdog1;
 	};
 
 	cpus {
@@ -591,7 +592,7 @@
 				status = "disabled";
 			};
 
-			sdma3: dma-controller@302b0000 {
+			sdma3: sdma@302b0000 {
 				compatible = "fsl,imx8mn-sdma", "fsl,imx8mq-sdma", "fsl,imx7d-sdma";
 				reg = <0x302b0000 0x10000>;
 				interrupts = <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
@@ -602,7 +603,7 @@
 				fsl,sdma-ram-script-name = "imx/sdma/sdma-imx7d.bin";
 			};
 
-			sdma2: dma-controller@302c0000 {
+			sdma2: sdma@302c0000 {
 				compatible = "fsl,imx8mn-sdma", "fsl,imx8mq-sdma", "fsl,imx7d-sdma";
 				reg = <0x302c0000 0x10000>;
 				interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
@@ -660,6 +661,12 @@
 			snvs: snvs@30370000 {
 				compatible = "fsl,sec-v4.0-mon","syscon", "simple-mfd";
 				reg = <0x30370000 0x10000>;
+
+				snvs_reboot: snvs-reboot {
+					compatible = "fsl,sec-v4.0-reboot";
+					regmap =<&snvs>;
+					offset = <0x68>;
+				};
 
 				snvs_rtc: snvs-rtc-lp {
 					compatible = "fsl,sec-v4.0-mon-rtc-lp";
@@ -935,7 +942,7 @@
 				#mbox-cells = <2>;
 			};
 
-			usdhc1: mmc@30b40000 {
+			usdhc1: usdhc@30b40000 {
 				compatible = "fsl,imx8mn-usdhc", "fsl,imx8mm-usdhc";
 				reg = <0x30b40000 0x10000>;
 				interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>;
@@ -951,7 +958,7 @@
 				status = "disabled";
 			};
 
-			usdhc2: mmc@30b50000 {
+			usdhc2: usdhc@30b50000 {
 				compatible = "fsl,imx8mn-usdhc", "fsl,imx8mm-usdhc";
 				reg = <0x30b50000 0x10000>;
 				interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
@@ -965,7 +972,7 @@
 				status = "disabled";
 			};
 
-			usdhc3: mmc@30b60000 {
+			usdhc3: usdhc@30b60000 {
 				compatible = "fsl,imx8mn-usdhc", "fsl,imx8mm-usdhc";
 				reg = <0x30b60000 0x10000>;
 				interrupts = <GIC_SPI 24 IRQ_TYPE_LEVEL_HIGH>;
@@ -997,7 +1004,7 @@
 				status = "disabled";
 			};
 
-			sdma1: dma-controller@30bd0000 {
+			sdma1: sdma@30bd0000 {
 				compatible = "fsl,imx8mn-sdma", "fsl,imx8mq-sdma", "fsl,imx7d-sdma";
 				reg = <0x30bd0000 0x10000>;
 				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
@@ -1079,6 +1086,7 @@
 
 			mipi_dsi: dsi_controller@32e10000 {
 				#address-cells = <1>;
+				#clock-cells = <1>;
 				#size-cells = <0>;
 				compatible = "fsl,imx8mn-mipi-dsim";
 				reg = <0x32e10000 0x400>;
@@ -1103,7 +1111,7 @@
 				};
 			};
 
-			display-subsystem {
+			display_subsystem: display-subsystem {
 				compatible = "fsl,imx-display-subsystem";
 				ports = <&lcdif_disp0>;
 			};

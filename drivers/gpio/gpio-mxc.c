@@ -221,7 +221,11 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 	u32 gpio_idx = d->hwirq;
 	int edge;
 	void __iomem *reg = port->base;
+	int ret;
 
+	ret = clk_prepare_enable(port->clk);
+	if (ret)
+		return ret;
 	port->both_edges &= ~(1 << gpio_idx);
 	switch (type) {
 	case IRQ_TYPE_EDGE_RISING:
@@ -245,6 +249,7 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 			port->both_edges |= 1 << gpio_idx;
 		}
 		break;
+	case IRQ_TYPE_NONE:
 	case IRQ_TYPE_LEVEL_LOW:
 		edge = GPIO_INT_LOW_LEV;
 		break;
@@ -252,7 +257,8 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 		edge = GPIO_INT_HIGH_LEV;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto exit1;
 	}
 
 	if (GPIO_EDGE_SEL >= 0) {
@@ -273,7 +279,8 @@ static int gpio_set_irq_type(struct irq_data *d, u32 type)
 	}
 
 	writel(1 << gpio_idx, port->base + GPIO_ISR);
-
+exit1:
+	clk_disable_unprepare(port->clk);
 	return 0;
 }
 
@@ -745,12 +752,11 @@ static int mxc_gpio_probe(struct platform_device *pdev)
 
 	return 0;
 
-out_pm_dis:
-	pm_runtime_disable(&pdev->dev);
-	clk_disable_unprepare(port->clk);
 out_irqdomain_remove:
 	irq_domain_remove(port->domain);
 out_bgio:
+out_pm_dis:
+	pm_runtime_disable(&pdev->dev);
 	clk_disable_unprepare(port->clk);
 	dev_info(&pdev->dev, "%s failed with errno %d\n", __func__, err);
 	return err;

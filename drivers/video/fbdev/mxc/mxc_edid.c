@@ -216,25 +216,41 @@ int mxc_edid_fb_mode_is_equal(bool use_aspect,
 static void get_detailed_timing(unsigned char *block,
 				struct fb_videomode *mode)
 {
+	u32 h_total, v_total, pixel_clock;
+	u32 h_blanking, v_blanking;
+
 	mode->xres = H_ACTIVE;
 	mode->yres = V_ACTIVE;
-	mode->pixclock = PIXEL_CLOCK;
-	mode->pixclock /= 1000;
-	mode->pixclock = KHZ2PICOS(mode->pixclock);
 	mode->right_margin = H_SYNC_OFFSET;
-	mode->left_margin = (H_ACTIVE + H_BLANKING) -
-		(H_ACTIVE + H_SYNC_OFFSET + H_SYNC_WIDTH);
-	mode->upper_margin = V_BLANKING - V_SYNC_OFFSET -
-		V_SYNC_WIDTH;
 	mode->lower_margin = V_SYNC_OFFSET;
 	mode->hsync_len = H_SYNC_WIDTH;
 	mode->vsync_len = V_SYNC_WIDTH;
+	h_blanking = H_BLANKING;
+	v_blanking = V_BLANKING;
+	mode->left_margin = h_blanking - mode->right_margin - mode->hsync_len;
+	mode->upper_margin = v_blanking - mode->lower_margin - mode->vsync_len;
 	if (HSYNC_POSITIVE)
 		mode->sync |= FB_SYNC_HOR_HIGH_ACT;
 	if (VSYNC_POSITIVE)
 		mode->sync |= FB_SYNC_VERT_HIGH_ACT;
-	mode->refresh = PIXEL_CLOCK/((H_ACTIVE + H_BLANKING) *
-				     (V_ACTIVE + V_BLANKING));
+
+	pixel_clock = PIXEL_CLOCK;
+	h_total = mode->xres + h_blanking;
+	v_total = mode->yres + v_blanking;
+	if (h_total && v_total) {
+		mode->refresh = pixel_clock/(h_total * v_total);
+	} else {
+		mode->refresh = 0;
+		pr_err("%s:error h_total=%d, v_total=%d\n", __func__, h_total, v_total);
+	}
+	pixel_clock /= 1000;
+	if (pixel_clock) {
+		pixel_clock = KHZ2PICOS(pixel_clock);
+	} else {
+		pr_err("%s:error pixel_clock=%d\n", __func__, pixel_clock);
+	}
+	mode->pixclock = pixel_clock;
+
 	if (INTERLACED) {
 		mode->yres *= 2;
 		mode->upper_margin *= 2;
@@ -599,6 +615,29 @@ int mxc_edid_parse_ext_blk(unsigned char *edid,
 }
 EXPORT_SYMBOL(mxc_edid_parse_ext_blk);
 
+unsigned char *override_edid;
+
+void mxc_set_edid_address(unsigned char *edid)
+{
+	pr_debug("%s: edid=%p\n", __func__, edid);
+	override_edid = edid;
+}
+EXPORT_SYMBOL(mxc_set_edid_address);
+
+static int mxc_edid_override(struct i2c_adapter *adp,
+		unsigned short addr, unsigned char *edid)
+{
+	int extblknum = 0;
+	unsigned char *slim_edid = override_edid;
+	memcpy(edid, slim_edid, EDID_LENGTH);
+
+	pr_debug("%s: for slim\n", __func__);
+	extblknum = edid[0x7E];
+	if (extblknum)
+		memcpy(edid + EDID_LENGTH, slim_edid + EDID_LENGTH, EDID_LENGTH);
+	return extblknum;
+}
+
 static int mxc_edid_readblk(struct i2c_adapter *adp,
 		unsigned short addr, unsigned char *edid)
 {
@@ -617,6 +656,9 @@ static int mxc_edid_readblk(struct i2c_adapter *adp,
 		.buf	= edid,
 		},
 	};
+
+	if (override_edid)
+		return mxc_edid_override(adp, addr, edid);
 
 	ret = i2c_transfer(adp, msg, ARRAY_SIZE(msg));
 	if (ret != ARRAY_SIZE(msg)) {

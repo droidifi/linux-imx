@@ -305,10 +305,10 @@ static int cdn_dp_connector_mode_valid(struct drm_connector *connector,
 	requested = mode->clock * bpc * 3 / 1000;
 
 	source_max = dp->lanes;
-	sink_max = dp->mhdp.dp.num_lanes;
+	sink_max = dp->mhdp.dp.link.num_lanes;
 	lanes = min(source_max, sink_max);
 
-	rate = dp->mhdp.dp.rate;
+	rate = dp->mhdp.dp.link.rate;
 
 	actual = rate * lanes / 100;
 
@@ -364,17 +364,17 @@ static int cdn_dp_firmware_init(struct cdn_dp_device *dp)
 static int cdn_dp_get_sink_capability(struct cdn_dp_device *dp)
 {
 	struct cdns_mhdp_device *mhdp = &dp->mhdp;
-	struct _dp_data *link = &mhdp->dp;
-// 	int ret;
+	struct drm_dp_link *link = &mhdp->dp.link;
+	int ret;
 
 	if (!cdn_dp_check_sink_connection(dp))
 		return -ENODEV;
 
-// 	ret = drm_dp_link_probe(&mhdp->dp.aux, link);
-// 	if (ret) {
-// 		DRM_DEV_ERROR(mhdp->dev, "Failed to get caps %d\n", ret);
-// 		return ret;
-// 	}
+	ret = drm_dp_link_probe(&mhdp->dp.aux, link);
+	if (ret) {
+		DRM_DEV_ERROR(mhdp->dev, "Failed to get caps %d\n", ret);
+		return ret;
+	}
 
 	if (link->rate > CDNS_DP_MAX_LINK_RATE)
 		link->rate = CDNS_DP_MAX_LINK_RATE;
@@ -408,7 +408,7 @@ static int cdn_dp_enable_phy(struct cdn_dp_device *dp, struct cdn_dp_port *port)
 		goto err_power_on;
 	}
 
-	ret = cdns_mhdp_read_hpd(&dp->mhdp);
+	ret = cdns_mhdp_get_hpd_status(&dp->mhdp);
 	if (ret <= 0) {
 		if (!ret)
 			DRM_DEV_ERROR(dev, "hpd does not exist\n");
@@ -423,7 +423,7 @@ static int cdn_dp_enable_phy(struct cdn_dp_device *dp, struct cdn_dp_port *port)
 	}
 
 	port->lanes = cdn_dp_get_port_lanes(port);
-	dp->mhdp.dp.num_lanes = port->lanes;
+	dp->mhdp.dp.link.num_lanes = port->lanes;
 	if (property.intval)
 		dp->mhdp.lane_mapping = LANE_MAPPING_FLIPPED;
 	else
@@ -491,8 +491,8 @@ static int cdn_dp_disable(struct cdn_dp_device *dp)
 	cdns_mhdp_set_firmware_active(&dp->mhdp, false);
 	cdn_dp_clk_disable(dp);
 	dp->active = false;
-	dp->mhdp.dp.rate = 0;
-	dp->mhdp.dp.num_lanes = 0;
+	dp->mhdp.dp.link.rate = 0;
+	dp->mhdp.dp.link.num_lanes = 0;
 	if (!dp->connected) {
 		kfree(dp->edid);
 		dp->edid = NULL;
@@ -583,9 +583,9 @@ static bool cdn_dp_check_link_status(struct cdn_dp_device *dp)
 {
 	u8 link_status[DP_LINK_STATUS_SIZE];
 	struct cdn_dp_port *port = cdn_dp_connected_port(dp);
-	u8 sink_lanes = dp->mhdp.dp.num_lanes;
+	u8 sink_lanes = dp->mhdp.dp.link.num_lanes;
 
-	if (!port || !dp->mhdp.dp.rate || !sink_lanes)
+	if (!port || !dp->mhdp.dp.link.rate || !sink_lanes)
 		return false;
 
 	if (cdns_mhdp_dpcd_read(&dp->mhdp, DP_LANE0_1_STATUS, link_status,
@@ -972,8 +972,8 @@ static void cdn_dp_pd_event_work(struct work_struct *work)
 
 	/* Enabled and connected with a sink, re-train if requested */
 	} else if (!cdn_dp_check_link_status(dp)) {
-		unsigned int rate = dp->mhdp.dp.rate;
-		unsigned int lanes = dp->mhdp.dp.num_lanes;
+		unsigned int rate = dp->mhdp.dp.link.rate;
+		unsigned int lanes = dp->mhdp.dp.link.num_lanes;
 		struct drm_display_mode *mode = &dp->mhdp.mode;
 
 		DRM_DEV_INFO(dev, "Connected with sink. Re-train link\n");
@@ -986,8 +986,8 @@ static void cdn_dp_pd_event_work(struct work_struct *work)
 
 		/* If training result is changed, update the video config */
 		if (mode->clock &&
-		    (rate != dp->mhdp.dp.rate ||
-		     lanes != dp->mhdp.dp.num_lanes)) {
+		    (rate != dp->mhdp.dp.link.rate ||
+		     lanes != dp->mhdp.dp.link.num_lanes)) {
 			ret = cdns_mhdp_config_video(&dp->mhdp);
 			if (ret) {
 				dp->connected = false;

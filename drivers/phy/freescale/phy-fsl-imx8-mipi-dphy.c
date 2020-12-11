@@ -112,6 +112,8 @@ struct mixel_dphy_priv {
 	struct mixel_dphy_cfg cfg;
 	struct regmap *regmap;
 	struct clk *phy_ref_clk;
+	struct clk_hw	dsi_clk;
+	unsigned long	frequency;
 	const struct mixel_dphy_devdata *devdata;
 };
 
@@ -135,16 +137,94 @@ static int phy_write(struct phy *phy, u32 value, unsigned int reg)
 	return ret;
 }
 
+#ifdef CONFIG_COMMON_CLK
+#define dsi_clk_to_data(_hw) container_of(_hw, struct mixel_dphy_priv, dsi_clk)
+
+static unsigned long mixel_dsi_clk_recalc_rate(struct clk_hw *hw,
+					    unsigned long parent_rate)
+{
+	return dsi_clk_to_data(hw)->frequency;
+}
+
+static long mixel_dsi_clk_round_rate(struct clk_hw *hw, unsigned long rate,
+				  unsigned long *prate)
+{
+	return dsi_clk_to_data(hw)->frequency;
+}
+
+static int mixel_dsi_clk_set_rate(struct clk_hw *hw, unsigned long rate,
+			       unsigned long parent_rate)
+{
+	return 0;
+}
+
+static int mixel_dsi_clk_prepare(struct clk_hw *hw)
+{
+	return 0;
+}
+
+static void mixel_dsi_clk_unprepare(struct clk_hw *hw)
+{
+	return;
+}
+
+static int mixel_dsi_clk_is_prepared(struct clk_hw *hw)
+{
+	struct mixel_dphy_priv *priv = dsi_clk_to_data(hw);
+
+	if (priv->cfg.cm < 16 || priv->cfg.cm > 255 ||
+	    priv->cfg.cn < 1 || priv->cfg.cn > 32 ||
+	    priv->cfg.co < 1 || priv->cfg.co > 8)
+		return 0;
+	return 1;
+}
+
+static const struct clk_ops mixel_dsi_clk_ops = {
+	.prepare = mixel_dsi_clk_prepare,
+	.unprepare = mixel_dsi_clk_unprepare,
+	.is_prepared = mixel_dsi_clk_is_prepared,
+	.recalc_rate = mixel_dsi_clk_recalc_rate,
+	.round_rate = mixel_dsi_clk_round_rate,
+	.set_rate = mixel_dsi_clk_set_rate,
+};
+
+static struct clk *mixel_dsi_clk_register_clk(struct mixel_dphy_priv *priv, struct device *dev)
+{
+	struct clk *clk;
+	struct clk_init_data init;
+
+	init.name = "mixel-dsi-clk";
+	init.ops = &mixel_dsi_clk_ops;
+	init.flags = 0;
+	init.parent_names = NULL;
+	init.num_parents = 0;
+	priv->dsi_clk.init = &init;
+
+	/* optional override of the clockname */
+	of_property_read_string(dev->of_node, "clock-output-names", &init.name);
+
+	/* register the clock */
+	clk = clk_register(dev, &priv->dsi_clk);
+	if (!IS_ERR(clk))
+		of_clk_add_provider(dev->of_node, of_clk_src_simple_get, clk);
+
+	return clk;
+}
+#endif
 /*
  * Find a ratio close to the desired one using continued fraction
  * approximation ending either at exact match or maximum allowed
  * nominator, denominator.
+ * continued fraction
+ *      2  1  2  1  2
+ * 0 1  2  3  8 11 30
+ * 1 0  1  1  3  4 11
  */
-static void get_best_ratio(u32 *pnum, u32 *pdenom, u32 max_n, u32 max_d)
+static void get_best_ratio(unsigned long *pnum, unsigned long *pdenom, u32 max_n, u32 max_d)
 {
-	u32 a = *pnum;
-	u32 b = *pdenom;
-	u32 c;
+	unsigned long a = *pnum;
+	unsigned long b = *pdenom;
+	unsigned long c;
 	u32 n[] = {0, 1};
 	u32 d[] = {1, 0};
 	u32 whole;
@@ -155,6 +235,7 @@ static void get_best_ratio(u32 *pnum, u32 *pdenom, u32 max_n, u32 max_d)
 		whole = a / b;
 		n[i] += (n[i ^ 1] * whole);
 		d[i] += (d[i ^ 1] * whole);
+//		printf("cf=%i n=%i d=%i\n", whole, n[i], d[i]);
 		if ((n[i] > max_n) || (d[i] > max_d)) {
 			i ^= 1;
 			break;
@@ -173,22 +254,34 @@ static int mixel_dphy_config_from_opts(struct phy *phy,
 {
 	struct mixel_dphy_priv *priv = dev_get_drvdata(phy->dev.parent);
 	unsigned long ref_clk = clk_get_rate(priv->phy_ref_clk);
-	u32 lp_t, numerator, denominator;
+	u32 lp_t;
+	unsigned long numerator, denominator;
+	unsigned max_d = 256;
+	unsigned long bit_clk;
 	unsigned long long tmp;
 	u32 n;
-	int i;
+	int i = 0;
 
-	if (dphy_opts->hs_clk_rate > DATA_RATE_MAX_SPEED ||
-	    dphy_opts->hs_clk_rate < DATA_RATE_MIN_SPEED)
+	bit_clk = dphy_opts->hs_clk_rate;
+	if (bit_clk > DATA_RATE_MAX_SPEED ||
+	    bit_clk < DATA_RATE_MIN_SPEED)
 		return -EINVAL;
 
-	numerator = dphy_opts->hs_clk_rate;
-	denominator = ref_clk;
-	get_best_ratio(&numerator, &denominator, 255, 256);
+	/* CM ranges between 16 and 255 */
+	/* CN ranges between 1 and 32 */
+	/* CO is power of 2: 1, 2, 4, 8 */
+	do {
+		numerator = bit_clk << i;
+		denominator = ref_clk;
+		get_best_ratio(&numerator, &denominator, 255, max_d >> i);
+		denominator <<= i;
+		i++;
+	} while ((denominator >> __ffs(denominator)) > 32);
+
 	if (!numerator || !denominator) {
-		dev_err(&phy->dev, "Invalid %d/%d for %ld/%ld\n",
+		dev_err(&phy->dev, "Invalid %ld/%ld for %ld/%ld\n",
 			numerator, denominator,
-			dphy_opts->hs_clk_rate, ref_clk);
+			bit_clk, ref_clk);
 		return -EINVAL;
 	}
 
@@ -213,14 +306,16 @@ static int mixel_dphy_config_from_opts(struct phy *phy,
 	    cfg->co < 1 || cfg->co > 8) {
 		dev_err(&phy->dev, "Invalid CM/CN/CO values: %u/%u/%u\n",
 			cfg->cm, cfg->cn, cfg->co);
-		dev_err(&phy->dev, "for hs_clk/ref_clk=%ld/%ld ~ %d/%d\n",
-			dphy_opts->hs_clk_rate, ref_clk,
+		dev_err(&phy->dev, "for hs_clk/ref_clk=%ld/%ld ~ %ld/%ld\n",
+			bit_clk, ref_clk,
 			numerator, denominator);
 		return -EINVAL;
 	}
 
-	dev_dbg(&phy->dev, "hs_clk/ref_clk=%ld/%ld ~ %d/%d\n",
-		dphy_opts->hs_clk_rate, ref_clk, numerator, denominator);
+	dphy_opts->hs_clk_rate = ref_clk * cfg->cm / (cfg->co * cfg->cn);
+	dev_dbg(&phy->dev, "hs_clk(%ld)/ref_clk=%ld/%ld ~ %ld/%ld\n",
+			dphy_opts->hs_clk_rate, bit_clk, ref_clk,
+			numerator, denominator);
 
 	/* LP clock period */
 	tmp = 1000000000000LL;
@@ -260,15 +355,15 @@ static int mixel_dphy_config_from_opts(struct phy *phy,
 	cfg->mc_prg_hs_prepare = dphy_opts->clk_prepare > lp_t ? 1 : 0;
 
 	/* hs_zero: formula from NXP BSP */
-	n = (144 * (dphy_opts->hs_clk_rate / 1000000) - 47500) / 10000;
+	n = (144 * (bit_clk / 1000000) - 47500) / 10000;
 	cfg->m_prg_hs_zero = n < 1 ? 1 : n;
 
 	/* clk_zero: formula from NXP BSP */
-	n = (34 * (dphy_opts->hs_clk_rate / 1000000) - 2500) / 1000;
+	n = (34 * (bit_clk / 1000000) - 2500) / 1000;
 	cfg->mc_prg_hs_zero = n < 1 ? 1 : n;
 
 	/* clk_trail, hs_trail: formula from NXP BSP */
-	n = (103 * (dphy_opts->hs_clk_rate / 1000000) + 10000) / 10000;
+	n = (103 * (bit_clk / 1000000) + 10000) / 10000;
 	if (n > 15)
 		n = 15;
 	if (n < 1)
@@ -277,17 +372,17 @@ static int mixel_dphy_config_from_opts(struct phy *phy,
 	cfg->mc_prg_hs_trail = n;
 
 	/* rxhs_settle: formula from NXP BSP */
-	if (dphy_opts->hs_clk_rate < MBPS(80))
+	if (bit_clk < MBPS(80))
 		cfg->rxhs_settle = 0x0d;
-	else if (dphy_opts->hs_clk_rate < MBPS(90))
+	else if (bit_clk < MBPS(90))
 		cfg->rxhs_settle = 0x0c;
-	else if (dphy_opts->hs_clk_rate < MBPS(125))
+	else if (bit_clk < MBPS(125))
 		cfg->rxhs_settle = 0x0b;
-	else if (dphy_opts->hs_clk_rate < MBPS(150))
+	else if (bit_clk < MBPS(150))
 		cfg->rxhs_settle = 0x0a;
-	else if (dphy_opts->hs_clk_rate < MBPS(225))
+	else if (bit_clk < MBPS(225))
 		cfg->rxhs_settle = 0x09;
-	else if (dphy_opts->hs_clk_rate < MBPS(500))
+	else if (bit_clk < MBPS(500))
 		cfg->rxhs_settle = 0x08;
 	else
 		cfg->rxhs_settle = 0x07;
@@ -338,6 +433,7 @@ static int mixel_dphy_configure(struct phy *phy, union phy_configure_opts *opts)
 	struct mixel_dphy_priv *priv = phy_get_drvdata(phy);
 	struct mixel_dphy_cfg cfg = { 0 };
 	int ret;
+	unsigned long ref_clk;
 
 	ret = mixel_dphy_config_from_opts(phy, &opts->mipi_dphy, &cfg);
 	if (ret)
@@ -345,6 +441,14 @@ static int mixel_dphy_configure(struct phy *phy, union phy_configure_opts *opts)
 
 	/* Update the configuration */
 	memcpy(&priv->cfg, &cfg, sizeof(struct mixel_dphy_cfg));
+
+	ref_clk = clk_get_rate(priv->phy_ref_clk);
+	/* Divided by 2 because mipi output clock is DDR */
+	priv->frequency = opts->mipi_dphy.hs_clk_rate >> 1;
+	if (priv->dsi_clk.clk)
+		clk_set_rate(priv->dsi_clk.clk, priv->frequency);
+	dev_info(&phy->dev, "%s:%ld ref_clk=%ld, cm=%d, co=%d cn=%d\n",
+		__func__, priv->frequency, ref_clk, cfg.cm, cfg.co, cfg.cn);
 
 	phy_write(phy, 0x00, DPHY_LOCK_BYP);
 	phy_write(phy, 0x01, priv->devdata->reg_tx_rcal);
@@ -499,6 +603,9 @@ static int mixel_dphy_probe(struct platform_device *pdev)
 	phy_set_drvdata(phy, priv);
 
 	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
+#ifdef CONFIG_COMMON_CLK
+	mixel_dsi_clk_register_clk(priv, dev);
+#endif
 
 	return PTR_ERR_OR_ZERO(phy_provider);
 }

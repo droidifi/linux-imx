@@ -434,7 +434,7 @@
 			tmu: tmu@30260000 {
 				compatible = "fsl,imx8mq-tmu";
 				reg = <0x30260000 0x10000>;
-				interrupt = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>;
+				interrupts = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clk IMX8MQ_CLK_TMU_ROOT>;
 				little-endian;
 				fsl,tmu-range = <0xb0000 0xa0026 0x80048 0x70061>;
@@ -593,6 +593,12 @@
 				compatible = "fsl,sec-v4.0-mon", "syscon", "simple-mfd";
 				reg = <0x30370000 0x10000>;
 
+				snvs_reboot: snvs-reboot {
+					compatible = "fsl,sec-v4.0-reboot";
+					regmap =<&snvs>;
+					offset = <0x68>;
+				};
+
 				snvs_rtc: snvs-rtc-lp{
 					compatible = "fsl,sec-v4.0-mon-rtc-lp";
 					regmap =<&snvs>;
@@ -651,12 +657,13 @@
 			gpc: gpc@303a0000 {
 				compatible = "fsl,imx8mq-gpc";
 				reg = <0x303a0000 0x10000>;
+				interrupts = <GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>;
 				interrupt-parent = <&gic>;
 				interrupt-controller;
 				broken-wake-request-signals;
 				#interrupt-cells = <3>;
 
-				pgc {
+				pgc: pgc {
 					#address-cells = <1>;
 					#size-cells = <0>;
 
@@ -837,6 +844,8 @@
 				clocks = <&clk IMX8MQ_CLK_ECSPI1_ROOT>,
 					 <&clk IMX8MQ_CLK_ECSPI1_ROOT>;
 				clock-names = "ipg", "per";
+				dmas = <&sdma1 0 7 1>, <&sdma1 1 7 2>;
+				dma-names = "rx", "tx";
 				status = "disabled";
 			};
 
@@ -849,6 +858,8 @@
 				clocks = <&clk IMX8MQ_CLK_ECSPI2_ROOT>,
 					 <&clk IMX8MQ_CLK_ECSPI2_ROOT>;
 				clock-names = "ipg", "per";
+				dmas = <&sdma1 2 7 1>, <&sdma1 3 7 2>;
+				dma-names = "rx", "tx";
 				status = "disabled";
 			};
 
@@ -861,6 +872,8 @@
 				clocks = <&clk IMX8MQ_CLK_ECSPI3_ROOT>,
 					 <&clk IMX8MQ_CLK_ECSPI3_ROOT>;
 				clock-names = "ipg", "per";
+				dmas = <&sdma1 4 7 1>, <&sdma1 5 7 2>;
+				dma-names = "rx", "tx";
 				status = "disabled";
 			};
 
@@ -986,6 +999,7 @@
 			};
 
 			dphy: dphy@30a00300 {
+				#clock-cells = <1>;
 				compatible = "fsl,imx8mq-mipi-dphy";
 				reg = <0x30a00300 0x100>;
 				clocks = <&clk IMX8MQ_CLK_DSI_PHY_REF>;
@@ -1103,7 +1117,7 @@
 				assigned-clocks = <&clk IMX8MQ_CLK_CSI1_CORE>,
 						  <&clk IMX8MQ_CLK_CSI1_PHY_REF>,
 						  <&clk IMX8MQ_CLK_CSI1_ESC>;
-				assigned-clock-rates = <133000000>, <100000000>, <66000000>;
+				assigned-clock-rates = <266000000>, <333000000>, <66000000>;
 				power-domains = <&pgc_mipi_csi1>;
 				csis-phy-reset = <&src 0x4c 7>;
 				phy-gpr = <&iomuxc_gpr 0x88>;
@@ -1118,6 +1132,7 @@
 					<&clk IMX8MQ_CLK_CSI1_ROOT>,
 					<&clk IMX8MQ_CLK_DUMMY>;
 				clock-names = "disp-axi", "csi_mclk", "disp_dcic";
+				dma-coherent;
 				status = "disabled";
 			};
 
@@ -1173,7 +1188,7 @@
 				assigned-clocks = <&clk IMX8MQ_CLK_CSI2_CORE>,
 						  <&clk IMX8MQ_CLK_CSI2_PHY_REF>,
 						  <&clk IMX8MQ_CLK_CSI2_ESC>;
-				assigned-clock-rates = <133000000>, <100000000>, <66000000>;
+				assigned-clock-rates = <266000000>, <333000000>, <66000000>;
 				power-domains = <&pgc_mipi_csi2>;
 				csis-phy-reset = <&src 0x50 7>;
 				phy-gpr = <&iomuxc_gpr 0xa4>;
@@ -1188,6 +1203,7 @@
 					<&clk IMX8MQ_CLK_CSI2_ROOT>,
 					<&clk IMX8MQ_CLK_DUMMY>;
 				clock-names = "disp-axi", "csi_mclk", "disp_dcic";
+				dma-coherent;
 				status = "disabled";
 			};
 
@@ -1514,6 +1530,62 @@
 			reg = <0x3d800000 0x400000>;
 			interrupt-parent = <&gic>;
 			interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		gpu_opp_table: gpu-opp-table {
+			compatible = "operating-points-v2";
+			dentry-name = "gpu";
+
+			opp-800000000 {
+				opp-hz = /bits/ 64 <800000000>;
+				opp-microvolt = <900000 810000 1050000>;
+			};
+			opp-1000000000 {
+				opp-hz = /bits/ 64 <1000000000>;
+				opp-microvolt = <950000 900000 1050000>;
+			};
+		};
+
+		vpu_opp_table_dec: vpu-opp-table-dec {
+			compatible = "operating-points-v2";
+			dentry-name = "axi-dec";
+
+			opp-588000000 {
+				opp-hz = /bits/ 64 <588000000>;
+				opp-microvolt = <900000 810000 1050000>;
+			};
+			opp-800000000 {
+				opp-hz = /bits/ 64 <800000000>;
+				opp-microvolt = <950000 900000 1050000>;
+			};
+		};
+
+		vpu_opp_table_g1: vpu-opp-table-g1 {
+			compatible = "operating-points-v2";
+			dentry-name = "g1";
+
+			opp-500000000 {
+				opp-hz = /bits/ 64 <500000000>;
+				opp-microvolt = <900000 810000 1050000>;
+			};
+			opp-600000000 {
+				opp-hz = /bits/ 64 <600000000>;
+				opp-microvolt = <950000 900000 1050000>;
+			};
+		};
+
+		vpu_opp_table_g2: vpu-opp-table-g2 {
+			compatible = "operating-points-v2";
+			dentry-name = "g2";
+
+			opp-550000000 {
+				opp-hz = /bits/ 64 <550000000>;
+				opp-microvolt = <900000 810000 1050000>;
+			};
+			opp-660000000 {
+				opp-hz = /bits/ 64 <660000000>;
+				opp-microvolt = <950000 900000 1050000>;
+			};
 		};
 
 		vpu: vpu@38300000 {

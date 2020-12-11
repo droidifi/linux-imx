@@ -25,6 +25,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 
+#include <drm/drmP.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_encoder.h>
 
@@ -150,8 +151,7 @@ void drm_bridge_detach(struct drm_bridge *bridge)
 {
 	if (WARN_ON(!bridge))
 		return;
-
-	if (WARN_ON(!bridge->dev))
+	if (!bridge->dev)
 		return;
 
 	if (bridge->funcs->detach)
@@ -327,6 +327,7 @@ void drm_bridge_pre_enable(struct drm_bridge *bridge)
 
 	if (bridge->funcs->pre_enable)
 		bridge->funcs->pre_enable(bridge);
+	drm_notifier_call_chain(DRM_MODE_DPMS_STANDBY, bridge->dev);
 }
 EXPORT_SYMBOL(drm_bridge_pre_enable);
 
@@ -349,6 +350,7 @@ void drm_bridge_enable(struct drm_bridge *bridge)
 		bridge->funcs->enable(bridge);
 
 	drm_bridge_enable(bridge->next);
+	drm_notifier_call_chain(DRM_MODE_DPMS_ON, bridge->dev);
 }
 EXPORT_SYMBOL(drm_bridge_enable);
 

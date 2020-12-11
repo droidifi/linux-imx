@@ -39,14 +39,16 @@ struct device_node *dev_pm_opp_of_get_opp_desc_node(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_of_get_opp_desc_node);
 
-struct opp_table *_managed_opp(struct device *dev, int index)
+/* Returns opp descriptor node for a device, caller must do of_node_put() */
+struct device_node *dev_pm_opp_of_get_opp_desc_node_indexed(struct device *dev, int index)
+{
+	return _opp_of_get_opp_desc_node(dev->of_node, index);
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_of_get_opp_desc_node_indexed);
+
+struct opp_table *_managed_opp(struct device *dev, struct device_node *np)
 {
 	struct opp_table *opp_table, *managed_table = NULL;
-	struct device_node *np;
-
-	np = _opp_of_get_opp_desc_node(dev->of_node, index);
-	if (!np)
-		return NULL;
 
 	list_for_each_entry(opp_table, &opp_tables, node) {
 		if (opp_table->np == np) {
@@ -65,8 +67,6 @@ struct opp_table *_managed_opp(struct device *dev, int index)
 			break;
 		}
 	}
-
-	of_node_put(np);
 
 	return managed_table;
 }
@@ -216,8 +216,7 @@ put_np:
 	of_node_put(np);
 }
 
-void _of_init_opp_table(struct opp_table *opp_table, struct device *dev,
-			int index)
+void _of_init_opp_table(struct opp_table *opp_table, struct device *dev)
 {
 	struct device_node *np, *opp_np;
 	u32 val;
@@ -229,6 +228,9 @@ void _of_init_opp_table(struct opp_table *opp_table, struct device *dev,
 	np = of_node_get(dev->of_node);
 	if (!np)
 		return;
+	if (!opp_table->np)
+		return;
+	opp_np = of_node_get(opp_table->np);
 
 	if (!of_property_read_u32(np, "clock-latency", &val))
 		opp_table->clock_latency_ns_max = val;
@@ -238,19 +240,13 @@ void _of_init_opp_table(struct opp_table *opp_table, struct device *dev,
 	if (of_find_property(np, "#power-domain-cells", NULL))
 		opp_table->is_genpd = true;
 
-	/* Get OPP table node */
-	opp_np = _opp_of_get_opp_desc_node(np, index);
 	of_node_put(np);
-
-	if (!opp_np)
-		return;
 
 	if (of_property_read_bool(opp_np, "opp-shared"))
 		opp_table->shared_opp = OPP_TABLE_ACCESS_SHARED;
 	else
 		opp_table->shared_opp = OPP_TABLE_ACCESS_EXCLUSIVE;
 
-	opp_table->np = opp_np;
 
 	_opp_table_alloc_required_tables(opp_table, dev, opp_np);
 	of_node_put(opp_np);
@@ -368,6 +364,21 @@ static bool _opp_is_supported(struct device *dev, struct opp_table *opp_table,
 
 	return true;
 }
+
+void opp_return_volts(struct dev_pm_opp *opp, unsigned long *u_volt,
+		unsigned long *u_volt_min, unsigned long *u_volt_max)
+{
+	struct dev_pm_opp_supply *supply = &opp->supplies[0];
+	if (supply) {
+		if (u_volt)
+			*u_volt = supply->u_volt;
+		if (u_volt_min)
+			*u_volt_min = supply->u_volt_min;
+		if (u_volt_max)
+			*u_volt_max = supply->u_volt_max;
+	}
+}
+EXPORT_SYMBOL_GPL(opp_return_volts);
 
 static int opp_parse_supplies(struct dev_pm_opp *opp, struct device *dev,
 			      struct opp_table *opp_table)
@@ -658,17 +669,15 @@ static int _of_add_opp_table_v2(struct device *dev, struct opp_table *opp_table)
 	struct dev_pm_opp *opp;
 
 	/* OPP table is already initialized for the device */
+	mutex_lock(&opp_table->lock);
 	if (opp_table->parsed_static_opps) {
-		kref_get(&opp_table->list_kref);
+		opp_table->parsed_static_opps++;
+		mutex_unlock(&opp_table->lock);
 		return 0;
 	}
 
-	/*
-	 * Re-initialize list_kref every time we add static OPPs to the OPP
-	 * table as the reference count may be 0 after the last tie static OPPs
-	 * were removed.
-	 */
-	kref_init(&opp_table->list_kref);
+	opp_table->parsed_static_opps = 1;
+	mutex_unlock(&opp_table->lock);
 
 	/* We have opp-table node now, iterate over it and add OPPs */
 	for_each_available_child_of_node(opp_table->np, np) {
@@ -678,7 +687,7 @@ static int _of_add_opp_table_v2(struct device *dev, struct opp_table *opp_table)
 			dev_err(dev, "%s: Failed to add OPP, %d\n", __func__,
 				ret);
 			of_node_put(np);
-			goto put_list_kref;
+			goto remove_static_opp;
 		} else if (opp) {
 			count++;
 		}
@@ -687,7 +696,7 @@ static int _of_add_opp_table_v2(struct device *dev, struct opp_table *opp_table)
 	/* There should be one of more OPP defined */
 	if (WARN_ON(!count)) {
 		ret = -ENOENT;
-		goto put_list_kref;
+		goto remove_static_opp;
 	}
 
 	list_for_each_entry(opp, &opp_table->opp_list, node)
@@ -698,30 +707,28 @@ static int _of_add_opp_table_v2(struct device *dev, struct opp_table *opp_table)
 		dev_err(dev, "Not all nodes have performance state set (%d: %d)\n",
 			count, pstate_count);
 		ret = -ENOENT;
-		goto put_list_kref;
+		goto remove_static_opp;
 	}
 
 	if (pstate_count)
 		opp_table->genpd_performance_state = true;
 
-	opp_table->parsed_static_opps = true;
-
 	return 0;
 
-put_list_kref:
-	_put_opp_list_kref(opp_table);
+remove_static_opp:
+	_opp_remove_all_static(opp_table);
 
 	return ret;
 }
 
 /* Initializes OPP tables based on old-deprecated bindings */
-static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
+static int _of_add_opp_table_v1(struct device *dev, struct device_node *np, struct opp_table *opp_table)
 {
 	const struct property *prop;
 	const __be32 *val;
 	int nr, ret = 0;
 
-	prop = of_find_property(dev->of_node, "operating-points", NULL);
+	prop = of_find_property(np, "operating-points", NULL);
 	if (!prop)
 		return -ENODEV;
 	if (!prop->value)
@@ -737,6 +744,10 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
 		return -EINVAL;
 	}
 
+	mutex_lock(&opp_table->lock);
+	opp_table->parsed_static_opps = 1;
+	mutex_unlock(&opp_table->lock);
+
 	val = prop->value;
 	while (nr) {
 		unsigned long freq = be32_to_cpup(val++) * 1000;
@@ -746,7 +757,7 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
 		if (ret) {
 			dev_err(dev, "%s: Failed to add OPP %ld (%d)\n",
 				__func__, freq, ret);
-			_put_opp_list_kref(opp_table);
+			_opp_remove_all_static(opp_table);
 			return ret;
 		}
 		nr -= 2;
@@ -772,27 +783,52 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
  * -ENODATA	when empty 'operating-points' property is found
  * -EINVAL	when invalid entries are found in opp-v2 table
  */
-int dev_pm_opp_of_add_table(struct device *dev)
+int dev_pm_opp_of_add_table_np(struct device *dev, struct device_node *np,
+		struct device_node **ref_np, int max_tables)
 {
 	struct opp_table *opp_table;
-	int ret;
-
-	opp_table = dev_pm_opp_get_opp_table_indexed(dev, 0);
-	if (!opp_table)
-		return -ENOMEM;
+	struct device_node *opp_np = NULL;
+	int ret = 0;
+	int i = 0;
 
 	/*
 	 * OPPs have two version of bindings now. Also try the old (v1)
 	 * bindings for backward compatibility with older dtbs.
 	 */
-	if (opp_table->np)
-		ret = _of_add_opp_table_v2(dev, opp_table);
-	else
-		ret = _of_add_opp_table_v1(dev, opp_table);
+	while (i < max_tables) {
+		opp_np = _opp_of_get_opp_desc_node(np, i);
+		if (!opp_np && i)
+			break;
 
-	if (ret)
-		dev_pm_opp_put_opp_table(opp_table);
+		opp_table = dev_pm_opp_get_opp_table_np(dev, opp_np);
+		if (!opp_table)
+			return -ENOMEM;
 
+		if (opp_np) {
+			ret = _of_add_opp_table_v2(dev, opp_table);
+		} else {
+			opp_np = np;
+			ret = _of_add_opp_table_v1(dev, np, opp_table);
+		}
+
+		if (ret) {
+			dev_pm_opp_put_opp_table(opp_table);
+			break;
+		}
+		*ref_np++ = opp_np;
+		i++;
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(dev_pm_opp_of_add_table_np);
+
+int dev_pm_opp_of_add_table(struct device *dev)
+{
+	struct device_node *opp_np = NULL;
+	int ret = dev_pm_opp_of_add_table_np(dev, dev->of_node, &opp_np, 1);
+
+	if (opp_np)
+		of_node_put(opp_np);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(dev_pm_opp_of_add_table);
@@ -832,7 +868,7 @@ int dev_pm_opp_of_add_table_indexed(struct device *dev, int index)
 			index = 0;
 	}
 
-	opp_table = dev_pm_opp_get_opp_table_indexed(dev, index);
+	opp_table = dev_pm_opp_get_opp_table_indexed(dev, NULL, index);
 	if (!opp_table)
 		return -ENOMEM;
 

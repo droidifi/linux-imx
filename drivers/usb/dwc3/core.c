@@ -25,7 +25,9 @@
 #include <linux/of.h>
 #include <linux/acpi.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/regulator/consumer.h>
 #include <linux/reset.h>
+#include <linux/gpio/consumer.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -113,12 +115,40 @@ void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode)
 	dwc->current_dr_role = mode;
 }
 
+void dwc3_set_vbus(struct dwc3 *dwc, bool enabled)
+{
+	u32 ret;
+
+	if (enabled) {
+		if (dwc->usb2_phy)
+			otg_set_vbus(dwc->usb2_phy->otg, true);
+		phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_HOST);
+		phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_HOST);
+		if (dwc->vbus_reg && !regulator_is_enabled(dwc->vbus_reg)) {
+			ret = regulator_enable(dwc->vbus_reg);
+			if (ret < 0)
+				dev_err(dwc->dev, "failed to enable vbus\n");
+		}
+	} else {
+		if (dwc->usb2_phy)
+			otg_set_vbus(dwc->usb2_phy->otg, false);
+		phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_DEVICE);
+		phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_DEVICE);
+		if (dwc->vbus_reg && regulator_is_enabled(dwc->vbus_reg)) {
+			ret = regulator_disable(dwc->vbus_reg);
+			if (ret < 0)
+				dev_err(dwc->dev, "failed to disable vbus\n");
+		}
+	}
+}
+
 static void __dwc3_set_mode(struct work_struct *work)
 {
 	struct dwc3 *dwc = work_to_dwc(work);
 	struct dwc3_platform_data *dwc3_pdata;
 	unsigned long flags;
 	int ret;
+	u32 reg;
 
 	pm_runtime_get_sync(dwc->dev);
 
@@ -162,19 +192,18 @@ static void __dwc3_set_mode(struct work_struct *work)
 		if (ret) {
 			dev_err(dwc->dev, "failed to initialize host\n");
 		} else {
-			if (dwc->usb2_phy)
-				otg_set_vbus(dwc->usb2_phy->otg, true);
-			phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_HOST);
-			phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_HOST);
+			dwc3_set_vbus(dwc, true);
+			if (dwc->dis_split_quirk) {
+				reg = dwc3_readl(dwc->regs, DWC3_GUCTL3);
+				reg |= DWC3_GUCTL3_SPLITDISABLE;
+				dwc3_writel(dwc->regs, DWC3_GUCTL3, reg);
+			}
 		}
 		break;
 	case DWC3_GCTL_PRTCAP_DEVICE:
 		dwc3_event_buffers_setup(dwc);
 
-		if (dwc->usb2_phy)
-			otg_set_vbus(dwc->usb2_phy->otg, false);
-		phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_DEVICE);
-		phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_DEVICE);
+		dwc3_set_vbus(dwc, false);
 
 		ret = dwc3_gadget_init(dwc);
 		if (ret)
@@ -1299,10 +1328,7 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
 	case USB_DR_MODE_PERIPHERAL:
 		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_DEVICE);
 
-		if (dwc->usb2_phy)
-			otg_set_vbus(dwc->usb2_phy->otg, false);
-		phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_DEVICE);
-		phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_DEVICE);
+		dwc3_set_vbus(dwc, false);
 
 		ret = dwc3_gadget_init(dwc);
 		if (ret) {
@@ -1314,10 +1340,7 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
 	case USB_DR_MODE_HOST:
 		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_HOST);
 
-		if (dwc->usb2_phy)
-			otg_set_vbus(dwc->usb2_phy->otg, true);
-		phy_set_mode(dwc->usb2_generic_phy, PHY_MODE_USB_HOST);
-		phy_set_mode(dwc->usb3_generic_phy, PHY_MODE_USB_HOST);
+		dwc3_set_vbus(dwc, true);
 
 		ret = dwc3_host_init(dwc);
 		if (ret) {
@@ -1371,6 +1394,7 @@ static void dwc3_core_exit_mode(struct dwc3 *dwc)
 static void dwc3_get_properties(struct dwc3 *dwc)
 {
 	struct device		*dev = dwc->dev;
+	struct regulator	*vbus_reg = NULL;
 	u8			lpm_nyet_threshold;
 	u8			tx_de_emphasis;
 	u8			hird_threshold;
@@ -1485,6 +1509,17 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 	dwc->dis_metastability_quirk = device_property_read_bool(dev,
 				"snps,dis_metastability_quirk");
 
+	dwc->dis_split_quirk = device_property_read_bool(dev,
+				"snps,dis-split-quirk");
+
+	vbus_reg = devm_regulator_get_optional(dev, "vbus");
+	if (IS_ERR(vbus_reg)) {
+		if (PTR_ERR(vbus_reg) != -ENODEV)
+			dev_err(dev, "vbus regulator failed %ld\n", PTR_ERR(vbus_reg));
+		vbus_reg = NULL;
+	}
+	dwc->vbus_reg = vbus_reg;
+
 	dwc->host_vbus_glitches = device_property_read_bool(dev,
 				"snps,host-vbus-glitches");
 
@@ -1565,6 +1600,7 @@ static int dwc3_probe(struct platform_device *pdev)
 	struct device		*dev = &pdev->dev;
 	struct resource		*res, dwc_res;
 	struct dwc3		*dwc;
+	struct gpio_desc	*reset_gpio;
 
 	int			ret;
 
@@ -1609,6 +1645,9 @@ static int dwc3_probe(struct platform_device *pdev)
 
 	dwc3_get_properties(dwc);
 
+	reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(reset_gpio))
+		return PTR_ERR(reset_gpio);
 	dwc->reset = devm_reset_control_get_optional_shared(dev, NULL);
 	if (IS_ERR(dwc->reset))
 		return PTR_ERR(dwc->reset);
@@ -1663,6 +1702,8 @@ static int dwc3_probe(struct platform_device *pdev)
 		goto err2;
 	}
 
+	gpiod_set_value_cansleep(reset_gpio, 0);
+
 	ret = dwc3_get_dr_mode(dwc);
 	if (ret)
 		goto err3;
@@ -1691,6 +1732,17 @@ static int dwc3_probe(struct platform_device *pdev)
 
 err5:
 	dwc3_event_buffers_cleanup(dwc);
+
+	usb_phy_shutdown(dwc->usb2_phy);
+	usb_phy_shutdown(dwc->usb3_phy);
+	phy_exit(dwc->usb2_generic_phy);
+	phy_exit(dwc->usb3_generic_phy);
+
+	usb_phy_set_suspend(dwc->usb2_phy, 1);
+	usb_phy_set_suspend(dwc->usb3_phy, 1);
+	phy_power_off(dwc->usb2_generic_phy);
+	phy_power_off(dwc->usb3_generic_phy);
+
 	dwc3_ulpi_exit(dwc);
 
 err4:
@@ -2024,10 +2076,26 @@ static int dwc3_resume(struct device *dev)
 
 	return 0;
 }
+
+static void dwc3_complete(struct device *dev)
+{
+	struct dwc3	*dwc = dev_get_drvdata(dev);
+	u32		reg;
+
+	if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_HOST &&
+			dwc->dis_split_quirk) {
+		reg = dwc3_readl(dwc->regs, DWC3_GUCTL3);
+		reg |= DWC3_GUCTL3_SPLITDISABLE;
+		dwc3_writel(dwc->regs, DWC3_GUCTL3, reg);
+	}
+}
+#else
+#define dwc3_complete NULL
 #endif /* CONFIG_PM_SLEEP */
 
 static const struct dev_pm_ops dwc3_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(dwc3_suspend, dwc3_resume)
+	.complete = dwc3_complete,
 	SET_RUNTIME_PM_OPS(dwc3_runtime_suspend, dwc3_runtime_resume,
 			dwc3_runtime_idle)
 };

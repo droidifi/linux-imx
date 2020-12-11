@@ -46,6 +46,10 @@
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
 
+static int debug;
+module_param(debug, int, 0644);
+MODULE_PARM_DESC(debug, "Debug level (0-2)");
+
 #define MX6S_CAM_DRV_NAME "mx6s-csi"
 #define MX6S_CAM_VERSION "0.0.1"
 #define MX6S_CAM_DRIVER_DESCRIPTION "i.MX6S_CSI"
@@ -129,6 +133,7 @@
 
 /* csi control reg 18 */
 #define BIT_CSI_ENABLE			(0x1 << 31)
+#define BIT_MIPI_DATA_FORMAT_RGB888		(0x24 << 25)
 #define BIT_MIPI_DATA_FORMAT_RAW8		(0x2a << 25)
 #define BIT_MIPI_DATA_FORMAT_RAW10		(0x2b << 25)
 #define BIT_MIPI_DATA_FORMAT_YUV422_8B	(0x1e << 25)
@@ -137,6 +142,7 @@
 #define BIT_DATA_FROM_MIPI		(0x1 << 22)
 #define BIT_MIPI_YU_SWAP		(0x1 << 21)
 #define BIT_MIPI_DOUBLE_CMPNT	(0x1 << 20)
+#define RGB888A_FORMAT_SEL			BIT(10)
 #define BIT_BASEADDR_CHG_ERR_EN	(0x1 << 9)
 #define BIT_BASEADDR_SWITCH_SEL	(0x1 << 5)
 #define BIT_BASEADDR_SWITCH_EN	(0x1 << 4)
@@ -249,10 +255,28 @@ static struct mx6s_fmt formats[] = {
 		.mbus_code	= MEDIA_BUS_FMT_UYVY8_2X8,
 		.bpp		= 2,
 	}, {
+		.name		= "UYVY-16b",
+		.fourcc		= V4L2_PIX_FMT_UYVY,
+		.pixelformat	= V4L2_PIX_FMT_UYVY,
+		.mbus_code	= MEDIA_BUS_FMT_UYVY8_1X16,
+		.bpp		= 2,
+	}, {
 		.name		= "YUYV-16",
 		.fourcc		= V4L2_PIX_FMT_YUYV,
 		.pixelformat	= V4L2_PIX_FMT_YUYV,
 		.mbus_code	= MEDIA_BUS_FMT_YUYV8_2X8,
+		.bpp		= 2,
+	}, {
+		.name		= "YUYV-16",
+		.fourcc		= V4L2_PIX_FMT_YUYV,
+		.pixelformat	= V4L2_PIX_FMT_YUYV,
+		.mbus_code	= MEDIA_BUS_FMT_UYVY8_2X8,
+		.bpp		= 2,
+	}, {
+		.name		= "YVYU-16",
+		.fourcc		= V4L2_PIX_FMT_YVYU,
+		.pixelformat	= V4L2_PIX_FMT_YVYU,
+		.mbus_code	= MEDIA_BUS_FMT_YVYU8_2X8,
 		.bpp		= 2,
 	}, {
 		.name		= "YUV32 (X-Y-U-V)",
@@ -266,6 +290,30 @@ static struct mx6s_fmt formats[] = {
 		.pixelformat	= V4L2_PIX_FMT_SBGGR8,
 		.mbus_code	= MEDIA_BUS_FMT_SBGGR8_1X8,
 		.bpp		= 1,
+	}, {
+		.name		= "RGB888",
+		.fourcc		= V4L2_PIX_FMT_RGB24,
+		.pixelformat	= V4L2_PIX_FMT_RGB24,
+		.mbus_code	= MEDIA_BUS_FMT_RGB888_1X24,
+		.bpp		= 3,
+	}, {
+		.name		= "BGR888",
+		.fourcc		= V4L2_PIX_FMT_BGR24,
+		.pixelformat	= V4L2_PIX_FMT_BGR24,
+		.mbus_code	= MEDIA_BUS_FMT_RGB888_1X24,
+		.bpp		= 3,
+	}, {
+		.name		= "XRGB32",
+		.fourcc		= V4L2_PIX_FMT_XRGB32,
+		.pixelformat	= V4L2_PIX_FMT_XRGB32,
+		.mbus_code	= MEDIA_BUS_FMT_RGB888_1X24,
+		.bpp		= 4,
+	}, {
+		.name		= "XBGR32",
+		.fourcc		= V4L2_PIX_FMT_XBGR32,
+		.pixelformat	= V4L2_PIX_FMT_XBGR32,
+		.mbus_code	= MEDIA_BUS_FMT_RGB888_1X24,
+		.bpp		= 4,
 	}
 };
 
@@ -360,32 +408,6 @@ static inline struct mx6s_csi_dev
 				*notifier_to_mx6s_dev(struct v4l2_async_notifier *n)
 {
 	return container_of(n, struct mx6s_csi_dev, subdev_notifier);
-}
-
-struct mx6s_fmt *format_by_fourcc(int fourcc)
-{
-	int i;
-
-	for (i = 0; i < NUM_FORMATS; i++) {
-		if (formats[i].pixelformat == fourcc)
-			return formats + i;
-	}
-
-	pr_err("unknown pixelformat:'%4.4s'\n", (char *)&fourcc);
-	return NULL;
-}
-
-struct mx6s_fmt *format_by_mbus(u32 code)
-{
-	int i;
-
-	for (i = 0; i < NUM_FORMATS; i++) {
-		if (formats[i].mbus_code == code)
-			return formats + i;
-	}
-
-	pr_err("unknown mbus:0x%x\n", code);
-	return NULL;
 }
 
 static struct mx6s_buffer *mx6s_ibuf_to_buf(struct mx6s_buf_internal *int_buf)
@@ -580,8 +602,6 @@ static void csi_dmareq_rff_enable(struct mx6s_csi_dev *csi_dev)
 	cr3 |= BIT_HRESP_ERR_EN;
 	cr3 &= ~BIT_RXFF_LEVEL;
 	cr3 |= 0x2 << 4;
-	if (csi_dev->csi_two_8bit_sensor_mode)
-		cr3 |= BIT_TWO_8BIT_SENSOR;
 
 	__raw_writel(cr3, csi_dev->regbase + CSI_CSICR3);
 	__raw_writel(cr2, csi_dev->regbase + CSI_CSICR2);
@@ -594,19 +614,6 @@ static void csi_dmareq_rff_disable(struct mx6s_csi_dev *csi_dev)
 	cr3 &= ~BIT_DMA_REQ_EN_RFF;
 	cr3 &= ~BIT_HRESP_ERR_EN;
 	__raw_writel(cr3, csi_dev->regbase + CSI_CSICR3);
-}
-
-static void csi_set_imagpara(struct mx6s_csi_dev *csi,
-					int width, int height)
-{
-	int imag_para = 0;
-	unsigned long cr3 = __raw_readl(csi->regbase + CSI_CSICR3);
-
-	imag_para = (width << 16) | height;
-	__raw_writel(imag_para, csi->regbase + CSI_CSIIMAG_PARA);
-
-	/* reflash the embeded DMA controller */
-	__raw_writel(cr3 | BIT_DMA_REFLASH_RFF, csi->regbase + CSI_CSICR3);
 }
 
 static void csi_error_recovery(struct mx6s_csi_dev *csi_dev)
@@ -633,6 +640,7 @@ static void csi_error_recovery(struct mx6s_csi_dev *csi_dev)
 	cr3 |= BIT_DMA_REFLASH_RFF;
 	csi_write(csi_dev, cr3, CSI_CSICR3);
 
+	csi_write(csi_dev, BIT_RFF_OR_INT | BIT_HRESP_ERR_INT, CSI_CSISR);
 	/* Ensable csi  */
 	cr18 |= BIT_CSI_ENABLE;
 	csi_write(csi_dev, cr18, CSI_CSICR18);
@@ -647,13 +655,11 @@ static int mx6s_videobuf_setup(struct vb2_queue *vq,
 {
 	struct mx6s_csi_dev *csi_dev = vb2_get_drv_priv(vq);
 
-	dev_dbg(csi_dev->dev, "count=%d, size=%d\n", *count, sizes[0]);
+	dev_dbg(csi_dev->dev, "count=%d, size=%d,%d\n", *count, sizes[0], csi_dev->pix.sizeimage);
 
 	alloc_devs[0] = csi_dev->dev;
-
 	sizes[0] = csi_dev->pix.sizeimage;
 
-	pr_debug("size=%d\n", sizes[0]);
 	if (0 == *count)
 		*count = 32;
 	if (!*num_planes &&
@@ -748,8 +754,7 @@ static int mx6s_csi_enable(struct mx6s_csi_dev *csi_dev)
 	csi_dev->skipframe = 0;
 	csisw_reset(csi_dev);
 
-	if (pix->field == V4L2_FIELD_INTERLACED)
-		csi_tvdec_enable(csi_dev, true);
+	csi_tvdec_enable(csi_dev, (pix->field == V4L2_FIELD_INTERLACED) ? true : false);
 
 	/* For mipi csi input only */
 	if (csi_dev->csi_mipi_mode == true) {
@@ -823,8 +828,13 @@ static void mx6s_csi_disable(struct mx6s_csi_dev *csi_dev)
 static int mx6s_configure_csi(struct mx6s_csi_dev *csi_dev)
 {
 	struct v4l2_pix_format *pix = &csi_dev->pix;
-	u32 cr1, cr18;
+	u32 cr1, cr3, cr18;
 	u32 width;
+
+	cr1 = csi_read(csi_dev, CSI_CSICR1);
+	cr1 &= ~BIT_PACK_DIR;
+	cr3 = csi_read(csi_dev, CSI_CSICR3);
+	cr3 &= ~(BIT_ZERO_PACK_EN | BIT_TWO_8BIT_SENSOR);
 
 	if (pix->field == V4L2_FIELD_INTERLACED) {
 		csi_deinterlace_enable(csi_dev, true);
@@ -835,49 +845,77 @@ static int mx6s_configure_csi(struct mx6s_csi_dev *csi_dev)
 		csi_buf_stride_set(csi_dev, 0);
 	}
 
+	width = pix->width;
+	if (!csi_dev->csi_mipi_mode && csi_dev->csi_two_8bit_sensor_mode)
+		cr3 |= BIT_TWO_8BIT_SENSOR;
+
 	switch (csi_dev->fmt->pixelformat) {
-	case V4L2_PIX_FMT_YUV32:
-	case V4L2_PIX_FMT_SBGGR8:
-		width = pix->width;
+	case V4L2_PIX_FMT_XBGR32:
+		/* RGB888 1 cycle*/
+		cr18 = BIT_MIPI_DATA_FORMAT_RGB888 | BIT_PARALLEL24_EN;
 		break;
-	case V4L2_PIX_FMT_UYVY:
+	case V4L2_PIX_FMT_XRGB32:
+		cr18 = BIT_MIPI_DATA_FORMAT_RGB888 | BIT_PARALLEL24_EN | RGB888A_FORMAT_SEL;
+		cr1 |= BIT_PACK_DIR;
+		break;
+		/*
+		 * Note: for this to work, the data type input to mipi_csi
+		 * must be RAW8 as well
+		 */
+	case V4L2_PIX_FMT_RGB24:
+		cr1 |= BIT_PACK_DIR;
+		/* Fall through */
+	case V4L2_PIX_FMT_BGR24:
+		/* RGB888 3 cycle*/
+		cr18 = BIT_MIPI_DATA_FORMAT_RAW8;
+		width = pix->width * 3;
+		break;
+	case V4L2_PIX_FMT_SBGGR8:
+		cr18 = BIT_MIPI_DATA_FORMAT_RAW8;
+		break;
 	case V4L2_PIX_FMT_YUYV:
-		if (csi_dev->csi_mipi_mode == true)
-			width = pix->width;
-		else
-			/* For parallel 8-bit sensor input */
+		if (csi_dev->fmt->mbus_code == MEDIA_BUS_FMT_UYVY8_2X8)
+			cr1 |= BIT_PACK_DIR | BIT_SWAP16_EN;
+		/* Fall through */
+	case V4L2_PIX_FMT_UYVY:
+	case V4L2_PIX_FMT_YVYU:
+		if (csi_dev->csi_mipi_mode) {
+			if (csi_dev->csi_two_8bit_sensor_mode) {
+				cr3 |= BIT_TWO_8BIT_SENSOR;
+				cr18 = BIT_MIPI_DATA_FORMAT_YUV422_8B | BIT_MIPI_DOUBLE_CMPNT;
+			} else {
+				cr18 = BIT_MIPI_DATA_FORMAT_YUV422_8B;
+			}
+		} else {
+			/* For parallel 8-bit sensor input, width*2 */
+			cr18 = BIT_MIPI_DATA_FORMAT_YUV422_8B;
 			width = pix->width * 2;
+		}
+		break;
+	case V4L2_PIX_FMT_YUV32:
+		cr18 = BIT_MIPI_DATA_FORMAT_RGB888 | BIT_PARALLEL24_EN;
 		break;
 	default:
 		pr_debug("   case not supported\n");
 		return -EINVAL;
 	}
-	csi_set_imagpara(csi_dev, width, pix->height);
+
+	csi_write(csi_dev, (width << 16) | pix->height, CSI_CSIIMAG_PARA);
+	csi_write(csi_dev, (pix->sizeimage + 3) >> 2, CSI_CSIRXCNT);
+	cr3 |= BIT_DMA_REFLASH_RFF; /* reflash the embeded DMA controller */
 
 	if (csi_dev->csi_mipi_mode == true) {
-		cr1 = csi_read(csi_dev, CSI_CSICR1);
 		cr1 &= ~BIT_GCLK_MODE;
-		csi_write(csi_dev, cr1, CSI_CSICR1);
 
-		cr18 = csi_read(csi_dev, CSI_CSICR18);
-		cr18 &= ~BIT_MIPI_DATA_FORMAT_MASK;
+		cr18 |= csi_read(csi_dev, CSI_CSICR18) &
+			~(BIT_MIPI_DATA_FORMAT_MASK | RGB888A_FORMAT_SEL |
+			BIT_PARALLEL24_EN | BIT_MIPI_DOUBLE_CMPNT);
 		cr18 |= BIT_DATA_FROM_MIPI;
-
-		switch (csi_dev->fmt->pixelformat) {
-		case V4L2_PIX_FMT_UYVY:
-		case V4L2_PIX_FMT_YUYV:
-			cr18 |= BIT_MIPI_DATA_FORMAT_YUV422_8B;
-			break;
-		case V4L2_PIX_FMT_SBGGR8:
-			cr18 |= BIT_MIPI_DATA_FORMAT_RAW8;
-			break;
-		default:
-			pr_debug("   fmt not supported\n");
-			return -EINVAL;
-		}
 
 		csi_write(csi_dev, cr18, CSI_CSICR18);
 	}
+	csi_write(csi_dev, cr1, CSI_CSICR1);
+	csi_write(csi_dev, cr3, CSI_CSICR3);
 	return 0;
 }
 
@@ -899,9 +937,9 @@ static int mx6s_start_streaming(struct vb2_queue *vq, unsigned int count)
 	 * discard frames when no buffer is available.
 	 * Feel free to work on this ;)
 	 */
-	csi_dev->discard_size = csi_dev->pix.sizeimage;
+	csi_dev->discard_size = PAGE_ALIGN(csi_dev->pix.sizeimage);
 	csi_dev->discard_buffer = dma_alloc_coherent(csi_dev->v4l2_dev.dev,
-					PAGE_ALIGN(csi_dev->discard_size),
+					csi_dev->discard_size,
 					&csi_dev->discard_buffer_dma,
 					GFP_DMA | GFP_KERNEL);
 	if (!csi_dev->discard_buffer)
@@ -1104,14 +1142,17 @@ static irqreturn_t mx6s_csi_irq_handler(int irq, void *data)
 	}
 
 	if (status & BIT_RFF_OR_INT) {
-		dev_warn(csi_dev->dev, "%s Rx fifo overflow\n", __func__);
-		if (csi_dev->soc->rx_fifo_rst)
+		dev_warn(csi_dev->dev, "%s Rx fifo overflow, %lx\n", __func__,
+			status);
+		if (csi_dev->soc->rx_fifo_rst) {
 			csi_error_recovery(csi_dev);
+			status &= ~BIT_HRESP_ERR_INT;
+		}
 	}
 
 	if (status & BIT_HRESP_ERR_INT) {
-		dev_warn(csi_dev->dev, "%s Hresponse error detected\n",
-			__func__);
+		dev_warn(csi_dev->dev, "%s Hresponse error detected, %lx\n",
+			__func__, status);
 		csi_error_recovery(csi_dev);
 	}
 
@@ -1132,6 +1173,10 @@ static irqreturn_t mx6s_csi_irq_handler(int irq, void *data)
 
 		csi_dev->skipframe = 1;
 		pr_debug("base address switching Change Err.\n");
+		if (csi_dev->nextfb == 0)
+			status |= BIT_DMA_TSF_DONE_FB1;
+		else
+			status |= BIT_DMA_TSF_DONE_FB2;
 	}
 
 	if ((status & BIT_DMA_TSF_DONE_FB1) &&
@@ -1287,8 +1332,8 @@ static int mx6s_vidioc_g_input(struct file *file, void *priv, unsigned int *i)
 
 static int mx6s_vidioc_s_input(struct file *file, void *priv, unsigned int i)
 {
-	if (i > 0)
-		return -EINVAL;
+//	if (i > 0)
+//		return -EINVAL;
 
 	return 0;
 }
@@ -1366,36 +1411,72 @@ static int mx6s_vidioc_dqbuf(struct file *file, void *priv,
 	return vb2_dqbuf(&csi_dev->vb2_vidq, p, file->f_flags & O_NONBLOCK);
 }
 
+static int verify_mbus(struct v4l2_subdev *sd, u32 code)
+{
+	int ret;
+	struct v4l2_subdev_mbus_code_enum ecode = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.index = 0,
+	};
+
+	while (1) {
+		ret = v4l2_subdev_call(sd, pad, enum_mbus_code, NULL, &ecode);
+		if (ret < 0) {
+			/* no more formats */
+			break;
+		}
+		if (ecode.code == code)
+			return 0;
+		ecode.index++;
+	}
+	return -EINVAL;
+}
+
+static struct mx6s_fmt *format_by_fourcc(struct v4l2_subdev *sd, int fourcc)
+{
+	struct mx6s_fmt *fmt = formats;
+	int i;
+
+	for (i = 0; i < NUM_FORMATS; i++, fmt++) {
+		if (fmt->pixelformat == fourcc) {
+			if (!verify_mbus(sd, fmt->mbus_code)) {
+				return fmt;
+			}
+		}
+	}
+
+	pr_err("unknown pixelformat:'%4.4s'\n", (char *)&fourcc);
+	return NULL;
+}
+
 static int mx6s_vidioc_enum_fmt_vid_cap(struct file *file, void  *priv,
 				       struct v4l2_fmtdesc *f)
 {
 	struct mx6s_csi_dev *csi_dev = video_drvdata(file);
 	struct v4l2_subdev *sd = csi_dev->sd;
-	struct v4l2_subdev_mbus_code_enum code = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-		.index = f->index,
-	};
+	int i = 0;
+	int found = 0;
 	struct mx6s_fmt *fmt;
-	int ret;
 
 	WARN_ON(priv != file->private_data);
 
-	ret = v4l2_subdev_call(sd, pad, enum_mbus_code, NULL, &code);
-	if (ret < 0) {
-		/* no more formats */
-		dev_dbg(csi_dev->dev, "No more fmt\n");
-		return -EINVAL;
+	while (1)  {
+		if (i >= ARRAY_SIZE(formats)) {
+			dev_dbg(csi_dev->dev, "No more fmt\n");
+			return -EINVAL;
+		}
+		if (!verify_mbus(sd, formats[i].mbus_code)) {
+			found++;
+			if (found > f->index)
+				break;
+		}
+		i++;
 	}
 
-	fmt = format_by_mbus(code.code);
-	if (!fmt) {
-		dev_err(csi_dev->dev, "mbus (0x%08x) invalid.\n", code.code);
-		return -EINVAL;
-	}
-
+	fmt = &formats[i];
 	strlcpy(f->description, fmt->name, sizeof(f->description));
 	f->pixelformat = fmt->pixelformat;
-
+	dev_dbg(csi_dev->dev, "enum format %s 0x%x 0x%x\n", fmt->name, fmt->mbus_code, fmt->pixelformat);
 	return 0;
 }
 
@@ -1411,7 +1492,7 @@ static int mx6s_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	struct mx6s_fmt *fmt;
 	int ret;
 
-	fmt = format_by_fourcc(f->fmt.pix.pixelformat);
+	fmt = format_by_fourcc(sd, f->fmt.pix.pixelformat);
 	if (!fmt) {
 		dev_err(csi_dev->dev, "Fourcc format (0x%08x) invalid.",
 			f->fmt.pix.pixelformat);
@@ -1433,7 +1514,6 @@ static int mx6s_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 
 	pix->sizeimage = fmt->bpp * pix->height * pix->width;
 	pix->bytesperline = fmt->bpp * pix->width;
-
 	return ret;
 }
 
@@ -1445,20 +1525,39 @@ static int mx6s_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 				    struct v4l2_format *f)
 {
 	struct mx6s_csi_dev *csi_dev = video_drvdata(file);
+	struct v4l2_subdev *sd = csi_dev->sd;
 	int ret;
+	struct v4l2_subdev_frame_size_enum fse;
+
+
+	memset(&fse, 0, sizeof(fse));
+	v4l2_subdev_call(sd, pad, enum_frame_size, NULL, &fse);
+	if (!f->fmt.pix.width)
+		f->fmt.pix.width = fse.min_width;
+	if (!f->fmt.pix.height)
+		f->fmt.pix.height = fse.min_height;
 
 	ret = mx6s_vidioc_try_fmt_vid_cap(file, csi_dev, f);
-	if (ret < 0)
-		return ret;
+	if (ret < 0) {
+//		f->fmt.pix.pixelformat = fse.pixel_format;
+		f->fmt.pix.width = fse.min_width;
+		f->fmt.pix.height = fse.min_height;
+		ret = mx6s_vidioc_try_fmt_vid_cap(file, csi_dev, f);
+		if (ret < 0)
+			return -EINVAL;
+	}
 
-	csi_dev->fmt           = format_by_fourcc(f->fmt.pix.pixelformat);
+	csi_dev->fmt           = format_by_fourcc(sd, f->fmt.pix.pixelformat);
+	if (!csi_dev->fmt)
+		return -EINVAL;
 	csi_dev->mbus_code     = csi_dev->fmt->mbus_code;
+	csi_dev->pix.pixelformat = f->fmt.pix.pixelformat;
 	csi_dev->pix.width     = f->fmt.pix.width;
 	csi_dev->pix.height    = f->fmt.pix.height;
 	csi_dev->pix.sizeimage = f->fmt.pix.sizeimage;
 	csi_dev->pix.field     = f->fmt.pix.field;
 	csi_dev->type          = f->type;
-	dev_dbg(csi_dev->dev, "set to pixelformat '%4.6s'\n",
+	dev_dbg(csi_dev->dev, "set to pixelformat '%s'\n",
 			(char *)&csi_dev->fmt->name);
 
 	/* Config csi */
@@ -1483,12 +1582,14 @@ static int mx6s_vidioc_querycap(struct file *file, void  *priv,
 			       struct v4l2_capability *cap)
 {
 	struct mx6s_csi_dev *csi_dev = video_drvdata(file);
+	struct v4l2_subdev *sd = csi_dev->sd;
 
 	WARN_ON(priv != file->private_data);
 
 	/* cap->name is set by the friendly caller:-> */
 	strlcpy(cap->driver, MX6S_CAM_DRV_NAME, sizeof(cap->driver));
-	strlcpy(cap->card, MX6S_CAM_DRIVER_DESCRIPTION, sizeof(cap->card));
+	strlcpy(cap->card, sd ? sd->name : MX6S_CAM_DRIVER_DESCRIPTION,
+		sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info), "platform:%s",
 		 dev_name(csi_dev->dev));
 
@@ -1557,6 +1658,8 @@ static int mx6s_vidioc_g_pixelaspect(struct file *file, void *fh,
 	if (type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 	dev_dbg(csi_dev->dev, "G_PIXELASPECT not implemented\n");
+	f->numerator = 1;
+	f->denominator = 1;
 
 	return 0;
 }
@@ -1616,7 +1719,9 @@ static int mx6s_vidioc_enum_framesizes(struct file *file, void *priv,
 	};
 	int ret;
 
-	fmt = format_by_fourcc(fsize->pixel_format);
+	fmt = format_by_fourcc(sd, fsize->pixel_format);
+	if (!fmt)
+		return -EINVAL;
 	if (fmt->pixelformat != fsize->pixel_format)
 		return -EINVAL;
 	fse.code = fmt->mbus_code;
@@ -1658,7 +1763,9 @@ static int mx6s_vidioc_enum_frameintervals(struct file *file, void *priv,
 	};
 	int ret;
 
-	fmt = format_by_fourcc(interval->pixel_format);
+	fmt = format_by_fourcc(sd, interval->pixel_format);
+	if (!fmt)
+		return -EINVAL;
 	if (fmt->pixelformat != interval->pixel_format)
 		return -EINVAL;
 	fie.code = fmt->mbus_code;

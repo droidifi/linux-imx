@@ -56,6 +56,21 @@ EXPORT_SYMBOL(num_registered_fb);
 bool fb_center_logo __read_mostly;
 EXPORT_SYMBOL(fb_center_logo);
 
+struct fb_info *find_registered_fb_from_dt(struct device_node *disp_node)
+{
+	int i;
+	struct fb_info *fbi = NULL;
+
+	for (i = 0; i < num_registered_fb; i++) {
+		fbi = registered_fb[i];
+		pr_info("%s: %s(%p) %s(%p)\n", __func__, fbi->device->of_node->name, fbi->device->of_node, disp_node->name, disp_node);
+		if (fbi->device->of_node == disp_node)
+			return fbi;
+	}
+	return NULL;
+}
+EXPORT_SYMBOL(find_registered_fb_from_dt);
+
 static struct fb_info *get_fb_info(unsigned int idx)
 {
 	struct fb_info *fb_info;
@@ -952,7 +967,6 @@ static int fb_check_caps(struct fb_info *info, struct fb_var_screeninfo *var,
 int
 fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 {
-	int flags = info->flags;
 	int ret = 0;
 	u32 activate;
 	struct fb_var_screeninfo old_var;
@@ -1002,6 +1016,10 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 		return 0;
 	}
 
+	/* bitfill_aligned() assumes that it's at least 8x8 */
+	if (var->xres < 8 || var->yres < 8)
+		return -EINVAL;
+
 	ret = info->fbops->fb_check_var(var, info);
 
 	if (ret)
@@ -1046,9 +1064,6 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 	event.info = info;
 	event.data = &mode;
 	fb_notifier_call_chain(FB_EVENT_MODE_CHANGE, &event);
-
-	if (flags & FBINFO_MISC_USEREVENT)
-		fbcon_update_vcs(info, activate & FB_ACTIVATE_ALL);
 
 	return 0;
 }
@@ -1100,9 +1115,9 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			return -EFAULT;
 		console_lock();
 		lock_fb_info(info);
-		info->flags |= FBINFO_MISC_USEREVENT;
 		ret = fb_set_var(info, &var);
-		info->flags &= ~FBINFO_MISC_USEREVENT;
+		if (!ret)
+			fbcon_update_vcs(info, var.activate & FB_ACTIVATE_ALL);
 		unlock_fb_info(info);
 		console_unlock();
 		if (!ret && copy_to_user(argp, &var, sizeof(var)))
@@ -1636,7 +1651,7 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	fb_add_videomode(&mode, &fb_info->modelist);
 	registered_fb[i] = fb_info;
 
-#if (defined CONFIG_GUMSTIX_AM200EPD) || (defined CONFIG_FB_MXC_HDMI) || (defined CONFIG_FB_MXS_SII902X)
+#if (defined CONFIG_GUMSTIX_AM200EPD) || (defined CONFIG_FB_EXTENDED_EVENTS) || (defined CONFIG_FB_MXS_SII902X)
 	{
 		struct fb_event event;
 		event.info = fb_info;
@@ -1704,7 +1719,7 @@ static void do_unregister_framebuffer(struct fb_info *fb_info)
 	registered_fb[fb_info->node] = NULL;
 	num_registered_fb--;
 	fb_cleanup_device(fb_info);
-#if (defined CONFIG_GUMSTIX_AM200EPD) || (defined CONFIG_FB_MXC_HDMI) || (defined CONFIG_FB_MXS_SII902X)
+#if (defined CONFIG_GUMSTIX_AM200EPD) || (defined CONFIG_FB_EXTENDED_EVENTS) || (defined CONFIG_FB_MXS_SII902X)
 	{
 		struct fb_event event;
 		event.info = fb_info;
@@ -1868,23 +1883,23 @@ EXPORT_SYMBOL(unregister_framebuffer);
  */
 void fb_set_suspend(struct fb_info *info, int state)
 {
-#ifdef CONFIG_FB_MXC_HDMI
+#ifdef CONFIG_FB_EXTENDED_EVENTS
 	struct fb_event event;
 #endif
 	WARN_CONSOLE_UNLOCKED();
 
-#ifdef CONFIG_FB_MXC_HDMI
+#ifdef CONFIG_FB_EXTENDED_EVENTS
 	event.info = info;
 #endif
 	if (state) {
-#ifdef CONFIG_FB_MXC_HDMI
+#ifdef CONFIG_FB_EXTENDED_EVENTS
 		fb_notifier_call_chain(FB_EVENT_SUSPEND, &event);
 #endif
 		fbcon_suspended(info);
 		info->state = FBINFO_STATE_SUSPENDED;
 	} else {
 		info->state = FBINFO_STATE_RUNNING;
-#ifdef CONFIG_FB_MXC_HDMI
+#ifdef CONFIG_FB_EXTENDED_EVENTS
 		fb_notifier_call_chain(FB_EVENT_RESUME, &event);
 #endif
 		fbcon_resumed(info);

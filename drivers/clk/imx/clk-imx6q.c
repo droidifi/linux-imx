@@ -253,6 +253,7 @@ static bool pll6_bypassed(struct device_node *node)
 	return false;
 }
 
+#define CCM_CCDR		0x04
 #define CCM_CCSR		0x0c
 #define CCM_CS2CDR		0x2c
 #define CCM_CSCDR3		0x3c
@@ -261,10 +262,20 @@ static bool pll6_bypassed(struct device_node *node)
 
 #define ANATOP_PLL3_PFD		0xf0
 
+#define CCDR_MMDC_CH1_MASK		BIT(16)
 #define CCSR_PLL3_SW_CLK_SEL		BIT(0)
 
 #define CS2CDR_LDB_DI0_CLK_SEL_SHIFT	9
 #define CS2CDR_LDB_DI1_CLK_SEL_SHIFT	12
+
+static void __init imx6q_mmdc_ch1_mask_handshake(void __iomem *ccm_base)
+{
+	unsigned int reg;
+
+	reg = readl_relaxed(ccm_base + CCM_CCDR);
+	reg |= CCDR_MMDC_CH1_MASK;
+	writel_relaxed(reg, ccm_base + CCM_CCDR);
+}
 
 /*
  * The only way to disable the MMDC_CH1 clock is to move it to pll3_sw_clk
@@ -455,15 +466,20 @@ static void __init init_ipu_clk(void __iomem *anatop_base)
 static void disable_anatop_clocks(void __iomem *anatop_base)
 {
 	unsigned int reg;
+	struct clk *parent = clk_get_parent(hws[IMX6QDL_CLK_PERIPH_PRE]->clk);
 
 	/* Make sure PLL2 PFDs 0-2 are gated */
 	reg = readl_relaxed(anatop_base + CCM_ANALOG_PFD_528);
+	reg |= PFD1_CLKGATE;				/* Disable PFD1 */
+
 	/* Cannot gate PFD2 if pll2_pfd2_396m is the parent of MMDC clock */
-	if (clk_get_parent(hws[IMX6QDL_CLK_PERIPH_PRE]->clk) ==
-	    hws[IMX6QDL_CLK_PLL2_PFD2_396M]->clk)
-		reg |= PFD0_CLKGATE | PFD1_CLKGATE;
-	else
-		reg |= PFD0_CLKGATE | PFD1_CLKGATE | PFD2_CLKGATE;
+	if (parent == hws[IMX6QDL_CLK_PLL2_PFD0_352M]->clk) {
+		reg |= PFD2_CLKGATE;			/* Disable PFD2 */
+	} else {
+		reg |= PFD0_CLKGATE;			/* Disable PFD0 */
+		if (parent == hws[IMX6QDL_CLK_PLL2_BUS]->clk)
+			reg |= PFD2_CLKGATE;		/* Disable PFD2 */
+	}
 	writel_relaxed(reg, anatop_base + CCM_ANALOG_PFD_528);
 
 	/* Make sure PLL3 PFDs 0-3 are gated */
@@ -663,6 +679,7 @@ static void __init imx6q_clocks_init(struct device_node *ccm_node)
 	base = of_iomap(np, 0);
 	ccm_base = base;
 	WARN_ON(!base);
+	imx6q_mmdc_ch1_mask_handshake(base);
 
 	/*                                              name                reg       shift width parent_names     num_parents */
 	hws[IMX6QDL_CLK_STEP]             = imx_clk_hw_mux("step",	            base + 0xc,  8,  1, step_sels,	   ARRAY_SIZE(step_sels));

@@ -140,9 +140,6 @@ static int imx8_pcie_phy_cal(struct phy *phy)
 	       imx8_phy->base + IMX8MP_PCIE_PHY_TRSV_REG0BB);
 	udelay(1);
 
-	/* Configure TX drive level  */
-	writel(0x2d, imx8_phy->base + 0x404);
-
 	return 0;
 }
 

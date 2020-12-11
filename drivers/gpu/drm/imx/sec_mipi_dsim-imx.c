@@ -85,6 +85,7 @@ static void imx_sec_dsim_encoder_helper_enable(struct drm_encoder *encoder)
 
 	pm_runtime_get_sync(dsim_dev->dev);
 
+	sec_mipi_dsim_pll_enable(encoder->bridge, 1);
 	ret = sec_dsim_rstc_reset(dsim_dev->mipi_reset, false);
 	if (ret)
 		dev_err(dsim_dev->dev, "deassert mipi_reset failed\n");
@@ -98,6 +99,7 @@ static void imx_sec_dsim_encoder_helper_disable(struct drm_encoder *encoder)
 	ret = sec_dsim_rstc_reset(dsim_dev->mipi_reset, true);
 	if (ret)
 		dev_err(dsim_dev->dev, "deassert mipi_reset failed\n");
+	sec_mipi_dsim_pll_enable(encoder->bridge, 0);
 
 	pm_runtime_put_sync(dsim_dev->dev);
 }
@@ -133,7 +135,7 @@ static int imx_sec_dsim_encoder_helper_atomic_check(struct drm_encoder *encoder,
 	}
 
 	/* check pll out */
-	ret = sec_mipi_dsim_check_pll_out(bridge->driver_private,
+	ret = sec_mipi_dsim_check_pll_out(bridge,
 					  adjusted_mode);
 	if (ret)
 		return ret;
@@ -312,7 +314,8 @@ static int imx_sec_dsim_bind(struct device *dev, struct device *master,
 	/* bind sec dsim bridge */
 	ret = sec_mipi_dsim_bind(dev, master, data, encoder, res, irq, pdata);
 	if (ret) {
-		dev_err(dev, "failed to bind sec dsim bridge: %d\n", ret);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "failed to bind sec dsim bridge: %d\n", ret);
 		pm_runtime_disable(dev);
 		drm_encoder_cleanup(encoder);
 		sec_dsim_of_put_resets(dsim_dev);

@@ -390,7 +390,11 @@ static void drm_fb_helper_dirty_blit_real(struct drm_fb_helper *fb_helper,
 	unsigned int y;
 
 	for (y = clip->y1; y < clip->y2; y++) {
-		memcpy(dst, src, len);
+		if (!fb_helper->dev->mode_config.fbdev_use_iomem)
+			memcpy(dst, src, len);
+		else
+			memcpy_toio((void __iomem *)dst, src, len);
+
 		src += fb->pitches[0];
 		dst += fb->pitches[0];
 	}
@@ -1829,10 +1833,13 @@ __drm_fb_helper_initial_config_and_unlock(struct drm_fb_helper *fb_helper,
 		/* don't leak any physical addresses to userspace */
 		info->flags |= FBINFO_HIDE_SMEM_START;
 
+
 	/* Need to drop locks to avoid recursive deadlock in
 	 * register_framebuffer. This is ok because the only thing left to do is
 	 * register the fbdev emulation instance in kernel_fb_helper_list. */
 	mutex_unlock(&fb_helper->lock);
+	if (info->fbops->fb_set_par)
+		info->fbops->fb_set_par(info);
 
 	ret = register_framebuffer(info);
 	if (ret < 0)

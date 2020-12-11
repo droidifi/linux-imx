@@ -315,6 +315,7 @@ static int i2c_device_probe(struct device *dev)
 	struct i2c_client	*client = i2c_verify_client(dev);
 	struct i2c_driver	*driver;
 	int status;
+	int irq_trigger_changed = 0;
 
 	if (!client)
 		return 0;
@@ -347,6 +348,7 @@ static int i2c_device_probe(struct device *dev)
 			irq = 0;
 
 		client->irq = irq;
+		irq_trigger_changed = can_request_irq(irq, 0);
 	}
 
 	/*
@@ -354,7 +356,7 @@ static int i2c_device_probe(struct device *dev)
 	 * or ACPI ID table is supplied for the probing device.
 	 */
 	if (!driver->id_table &&
-	    !i2c_acpi_match_device(dev->driver->acpi_match_table, client) &&
+	    !acpi_driver_match_device(dev, dev->driver) &&
 	    !i2c_of_match_device(dev->driver->of_match_table, client)) {
 		status = -ENODEV;
 		goto put_sync_adapter;
@@ -418,6 +420,14 @@ put_sync_adapter:
 	if (client->flags & I2C_CLIENT_HOST_NOTIFY)
 		pm_runtime_put_sync(&client->adapter->dev);
 
+	if (client->irq && irq_trigger_changed) {
+		/*
+		 * return irq to none so that another driver may
+		 * select a different trigger
+		 */
+		irq_set_irq_type(client->irq, IRQ_TYPE_NONE);
+		client->irq = 0;
+	}
 	return status;
 }
 
@@ -1385,8 +1395,8 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 
 	/* create pre-declared device nodes */
 	of_i2c_register_devices(adap);
-	i2c_acpi_register_devices(adap);
 	i2c_acpi_install_space_handler(adap);
+	i2c_acpi_register_devices(adap);
 
 	if (adap->nr < __i2c_first_dynamic_bus_num)
 		i2c_scan_static_board_info(adap);

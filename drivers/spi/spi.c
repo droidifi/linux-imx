@@ -475,6 +475,12 @@ static LIST_HEAD(spi_controller_list);
  */
 static DEFINE_MUTEX(board_lock);
 
+/*
+ * Prevents addition of devices with same chip select and
+ * addition of devices below an unregistering controller.
+ */
+static DEFINE_MUTEX(spi_add_lock);
+
 /**
  * spi_alloc_device - Allocate a new SPI device
  * @ctlr: Controller to which device is connected
@@ -553,7 +559,6 @@ static int spi_dev_check(struct device *dev, void *data)
  */
 int spi_add_device(struct spi_device *spi)
 {
-	static DEFINE_MUTEX(spi_add_lock);
 	struct spi_controller *ctlr = spi->controller;
 	struct device *dev = ctlr->dev.parent;
 	int status;
@@ -578,6 +583,13 @@ int spi_add_device(struct spi_device *spi)
 	if (status) {
 		dev_err(dev, "chipselect %d already in use\n",
 				spi->chip_select);
+		goto done;
+	}
+
+	/* Controller may unregister concurrently */
+	if (IS_ENABLED(CONFIG_SPI_DYNAMIC) &&
+	    !device_is_registered(&ctlr->dev)) {
+		status = -ENODEV;
 		goto done;
 	}
 
@@ -646,7 +658,7 @@ struct spi_device *spi_new_device(struct spi_controller *ctlr,
 	WARN_ON(strlen(chip->modalias) >= sizeof(proxy->modalias));
 
 	proxy->chip_select = chip->chip_select;
-	proxy->max_speed_hz = chip->max_speed_hz;
+	proxy->max_read_speed_hz = proxy->max_speed_hz = chip->max_speed_hz;
 	proxy->mode = chip->mode;
 	proxy->irq = chip->irq;
 	strlcpy(proxy->modalias, chip->modalias, sizeof(proxy->modalias));
@@ -1229,8 +1241,6 @@ out:
 	if (msg->status && ctlr->handle_err)
 		ctlr->handle_err(ctlr, msg);
 
-	spi_res_release(ctlr, msg);
-
 	spi_finalize_current_message(ctlr);
 
 	return ret;
@@ -1513,6 +1523,13 @@ void spi_finalize_current_message(struct spi_controller *ctlr)
 
 	spi_unmap_msg(ctlr, mesg);
 
+	/* In the prepare_messages callback the spi bus has the opportunity to
+	 * split a transfer to smaller chunks.
+	 * Release splited transfers here since spi_map_msg is done on the
+	 * splited transfers.
+	 */
+	spi_res_release(ctlr, mesg);
+
 	if (ctlr->cur_msg_prepared && ctlr->unprepare_message) {
 		ret = ctlr->unprepare_message(ctlr, mesg);
 		if (ret) {
@@ -1793,6 +1810,11 @@ static int of_spi_parse_dt(struct spi_controller *ctlr, struct spi_device *spi,
 	}
 	spi->max_speed_hz = value;
 
+	rc = of_property_read_u32(nc, "spi-max-read-frequency", &value);
+	if (!rc)
+		spi->max_read_speed_hz = value;
+	if (!spi->max_read_speed_hz)
+		spi->max_read_speed_hz = spi->max_speed_hz;
 	return 0;
 }
 
@@ -1950,6 +1972,7 @@ static int acpi_spi_add_resource(struct acpi_resource *ares, void *data)
 			}
 
 			lookup->max_speed_hz = sb->connection_speed;
+			lookup->bits_per_word = sb->data_bit_length;
 
 			if (sb->clock_phase == ACPI_SPI_SECOND_PHASE)
 				lookup->mode |= SPI_CPHA;
@@ -2185,6 +2208,8 @@ static struct class spi_slave_class = {
 extern struct class spi_slave_class;	/* dummy */
 #endif
 
+static int of_spi_get_pinctrl(struct spi_master *master, struct device *dev);
+
 /**
  * __spi_alloc_controller - allocate an SPI master or slave controller
  * @dev: the controller, possibly using the platform_bus
@@ -2234,10 +2259,54 @@ struct spi_controller *__spi_alloc_controller(struct device *dev,
 	ctlr->dev.parent = dev;
 	pm_suspend_ignore_children(&ctlr->dev, true);
 	spi_controller_set_devdata(ctlr, (void *)ctlr + ctlr_size);
+	of_spi_get_pinctrl(ctlr, dev);
 
 	return ctlr;
 }
 EXPORT_SYMBOL_GPL(__spi_alloc_controller);
+
+static void devm_spi_release_controller(struct device *dev, void *ctlr)
+{
+	spi_controller_put(*(struct spi_controller **)ctlr);
+}
+
+/**
+ * __devm_spi_alloc_controller - resource-managed __spi_alloc_controller()
+ * @dev: physical device of SPI controller
+ * @size: how much zeroed driver-private data to allocate
+ * @slave: whether to allocate an SPI master (false) or SPI slave (true)
+ * Context: can sleep
+ *
+ * Allocate an SPI controller and automatically release a reference on it
+ * when @dev is unbound from its driver.  Drivers are thus relieved from
+ * having to call spi_controller_put().
+ *
+ * The arguments to this function are identical to __spi_alloc_controller().
+ *
+ * Return: the SPI controller structure on success, else NULL.
+ */
+struct spi_controller *__devm_spi_alloc_controller(struct device *dev,
+						   unsigned int size,
+						   bool slave)
+{
+	struct spi_controller **ptr, *ctlr;
+
+	ptr = devres_alloc(devm_spi_release_controller, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return NULL;
+
+	ctlr = __spi_alloc_controller(dev, size, slave);
+	if (ctlr) {
+		*ptr = ctlr;
+		devres_add(dev, ptr);
+	} else {
+		devres_free(ptr);
+	}
+
+	return ctlr;
+}
+EXPORT_SYMBOL_GPL(__devm_spi_alloc_controller);
 
 #ifdef CONFIG_OF
 static int of_spi_get_gpio_numbers(struct spi_controller *ctlr)
@@ -2272,8 +2341,38 @@ static int of_spi_get_gpio_numbers(struct spi_controller *ctlr)
 
 	return 0;
 }
+
+static int of_spi_get_pinctrl(struct spi_controller *ctlr, struct device *dev)
+{
+	int ret;
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *pins_read;
+	struct pinctrl_state *pins_write;
+
+	pinctrl = devm_pinctrl_get(dev);
+	if (!IS_ERR(pinctrl)) {
+		ctlr->pinctrl = pinctrl;
+		pins_read = pinctrl_lookup_state(pinctrl, "read");
+		if (!IS_ERR(pins_read))
+			ctlr->pins_read = pins_read;
+
+		pins_write = pinctrl_lookup_state(pinctrl, "write");
+		if (!IS_ERR(pins_write)) {
+			ctlr->pins_write = pins_write;
+			ret = pinctrl_select_state(pinctrl, pins_write);
+			if (ret)
+				return ret;
+		}
+	}
+	return 0;
+}
 #else
 static int of_spi_get_gpio_numbers(struct spi_controller *ctlr)
+{
+	return 0;
+}
+
+static int of_spi_get_pinctrl(struct spi_master *master, struct device *dev)
 {
 	return 0;
 }
@@ -2558,6 +2657,11 @@ int devm_spi_register_controller(struct device *dev,
 }
 EXPORT_SYMBOL_GPL(devm_spi_register_controller);
 
+static int devm_spi_match_controller(struct device *dev, void *res, void *ctlr)
+{
+	return *(struct spi_controller **)res == ctlr;
+}
+
 static int __unregister(struct device *dev, void *null)
 {
 	spi_unregister_device(to_spi_device(dev));
@@ -2581,6 +2685,10 @@ void spi_unregister_controller(struct spi_controller *ctlr)
 	struct spi_controller *found;
 	int id = ctlr->bus_num;
 
+	/* Prevent addition of new devices, unregister existing ones */
+	if (IS_ENABLED(CONFIG_SPI_DYNAMIC))
+		mutex_lock(&spi_add_lock);
+
 	device_for_each_child(&ctlr->dev, NULL, __unregister);
 
 	/* First make sure that this controller was ever added */
@@ -2595,12 +2703,23 @@ void spi_unregister_controller(struct spi_controller *ctlr)
 	list_del(&ctlr->list);
 	mutex_unlock(&board_lock);
 
-	device_unregister(&ctlr->dev);
+	device_del(&ctlr->dev);
+
+	/* Release the last reference on the controller if its driver
+	 * has not yet been converted to devm_spi_alloc_master/slave().
+	 */
+	if (!devres_find(ctlr->dev.parent, devm_spi_release_controller,
+			 devm_spi_match_controller, ctlr))
+		put_device(&ctlr->dev);
+
 	/* free bus id */
 	mutex_lock(&board_lock);
 	if (found == ctlr)
 		idr_remove(&spi_master_idr, id);
 	mutex_unlock(&board_lock);
+
+	if (IS_ENABLED(CONFIG_SPI_DYNAMIC))
+		mutex_unlock(&spi_add_lock);
 }
 EXPORT_SYMBOL_GPL(spi_unregister_controller);
 
@@ -3087,6 +3206,10 @@ int spi_setup(struct spi_device *spi)
 
 	if (!spi->max_speed_hz)
 		spi->max_speed_hz = spi->controller->max_speed_hz;
+	if (!spi->max_read_speed_hz)
+		spi->max_read_speed_hz = spi->controller->max_read_speed_hz;
+	if (!spi->max_read_speed_hz)
+		spi->max_read_speed_hz = spi->max_speed_hz;
 
 	if (spi->controller->setup)
 		status = spi->controller->setup(spi);
@@ -3200,7 +3323,8 @@ static int __spi_validate(struct spi_device *spi, struct spi_message *message)
 			xfer->bits_per_word = spi->bits_per_word;
 
 		if (!xfer->speed_hz)
-			xfer->speed_hz = spi->max_speed_hz;
+			xfer->speed_hz = xfer->read_setup ?
+				spi->max_read_speed_hz : spi->max_speed_hz;
 
 		if (ctlr->max_speed_hz && xfer->speed_hz > ctlr->max_speed_hz)
 			xfer->speed_hz = ctlr->max_speed_hz;

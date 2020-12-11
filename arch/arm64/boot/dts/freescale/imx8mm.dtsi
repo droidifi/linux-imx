@@ -45,6 +45,7 @@
 		sai3 = &sai3;
 		sai5 = &sai5;
 		sai6 = &sai6;
+		wdog0 = &wdog1;
 	};
 
 	cpus {
@@ -275,6 +276,60 @@
 				 <&clk IMX8MM_CLK_GPU3D_ROOT>;
 		};
 
+		vpu_opp_table_g1: vpu-opp-table-g1 {
+			compatible = "operating-points-v2";
+			dentry-name = "g1";
+
+			opp-450000000 {
+				opp-hz = /bits/ 64 <450000000>;
+				opp-microvolt = <850000 805000 900000>;
+			};
+			opp-650000000 {
+				opp-hz = /bits/ 64 <650000000>;
+				opp-microvolt = <900000 855000 950000>;
+			};
+			opp-750000000 {
+				opp-hz = /bits/ 64 <750000000>;
+				opp-microvolt = <950000 900000 1000000>;
+			};
+		};
+
+		vpu_opp_table_g2: vpu-opp-table-g2 {
+			compatible = "operating-points-v2";
+			dentry-name = "g2";
+
+			opp-450000000 {
+				opp-hz = /bits/ 64 <450000000>;
+				opp-microvolt = <850000 805000 900000>;
+			};
+			opp-600000000 {
+				opp-hz = /bits/ 64 <600000000>;
+				opp-microvolt = <900000 855000 950000>;
+			};
+			opp-700000000 {
+				opp-hz = /bits/ 64 <700000000>;
+				opp-microvolt = <950000 900000 1000000>;
+			};
+		};
+
+		vpu_opp_table_h1: vpu-opp-table-h1 {
+			compatible = "operating-points-v2";
+			dentry-name = "h1";
+
+			opp-450000000 {
+				opp-hz = /bits/ 64 <450000000>;
+				opp-microvolt = <850000 805000 900000>;
+			};
+			opp-650000000 {
+				opp-hz = /bits/ 64 <650000000>;
+				opp-microvolt = <900000 855000 950000>;
+			};
+			opp-750000000 {
+				opp-hz = /bits/ 64 <750000000>;
+				opp-microvolt = <950000 900000 1000000>;
+			};
+		};
+
 		/* VPU SS */
 		vpumix_pd: vpumix-pd {
 			compatible = "fsl,imx8m-pm-domain";
@@ -291,6 +346,7 @@
 			domain-name = "vpu_g1";
 			parent-domains = <&vpumix_pd>;
 			clocks = <&clk IMX8MM_CLK_VPU_G1_ROOT>;
+			operating-points-v2 = <&vpu_opp_table_g1>;
 		};
 
 		vpu_g2_pd: vpug2-pd {
@@ -300,6 +356,7 @@
 			domain-name = "vpu_g2";
 			parent-domains = <&vpumix_pd>;
 			clocks = <&clk IMX8MM_CLK_VPU_G2_ROOT>;
+			operating-points-v2 = <&vpu_opp_table_g2>;
 		};
 
 		vpu_h1_pd: vpuh1-pd {
@@ -309,6 +366,7 @@
 			domain-name = "vpu_h1";
 			parent-domains = <&vpumix_pd>;
 			clocks = <&clk IMX8MM_CLK_VPU_H1_ROOT>;
+			operating-points-v2 = <&vpu_opp_table_h1>;
 		};
 
 		/* DISP SS */
@@ -632,7 +690,7 @@
 				status = "disabled";
 			};
 
-			sdma2: dma-controller@302c0000 {
+			sdma2: sdma@302c0000 {
 				compatible = "fsl,imx8mm-sdma", "fsl,imx8mq-sdma";
 				reg = <0x302c0000 0x10000>;
 				interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
@@ -643,7 +701,7 @@
 				fsl,sdma-ram-script-name = "imx/sdma/sdma-imx7d.bin";
 			};
 
-			sdma3: dma-controller@302b0000 {
+			sdma3: sdma@302b0000 {
 				compatible = "fsl,imx8mm-sdma", "fsl,imx8mq-sdma";
 				reg = <0x302b0000 0x10000>;
 				interrupts = <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
@@ -705,6 +763,12 @@
 			snvs: snvs@30370000 {
 				compatible = "fsl,sec-v4.0-mon","syscon", "simple-mfd";
 				reg = <0x30370000 0x10000>;
+
+				snvs_reboot: snvs-reboot {
+					compatible = "fsl,sec-v4.0-reboot";
+					regmap =<&snvs>;
+					offset = <0x68>;
+				};
 
 				snvs_rtc: snvs-rtc-lp {
 					compatible = "fsl,sec-v4.0-mon-rtc-lp";
@@ -1008,7 +1072,7 @@
 				#mbox-cells = <2>;
 			};
 
-			usdhc1: mmc@30b40000 {
+			usdhc1: usdhc@30b40000 {
 				compatible = "fsl,imx8mm-usdhc", "fsl,imx7d-usdhc";
 				reg = <0x30b40000 0x10000>;
 				interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>;
@@ -1024,7 +1088,7 @@
 				status = "disabled";
 			};
 
-			usdhc2: mmc@30b50000 {
+			usdhc2: usdhc@30b50000 {
 				compatible = "fsl,imx8mm-usdhc", "fsl,imx7d-usdhc";
 				reg = <0x30b50000 0x10000>;
 				interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
@@ -1038,7 +1102,7 @@
 				status = "disabled";
 			};
 
-			usdhc3: mmc@30b60000 {
+			usdhc3: usdhc@30b60000 {
 				compatible = "fsl,imx8mm-usdhc", "fsl,imx7d-usdhc";
 				reg = <0x30b60000 0x10000>;
 				interrupts = <GIC_SPI 24 IRQ_TYPE_LEVEL_HIGH>;
@@ -1054,7 +1118,7 @@
 				status = "disabled";
 			};
 
-			sdma1: dma-controller@30bd0000 {
+			sdma1: sdma@30bd0000 {
 				compatible = "fsl,imx8mm-sdma", "fsl,imx8mq-sdma";
 				reg = <0x30bd0000 0x10000>;
 				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
@@ -1111,8 +1175,9 @@
 				reg = <0x32e00000 0x10000>;
 				clocks = <&clk IMX8MM_CLK_LCDIF_PIXEL>,
 					 <&clk IMX8MM_CLK_DISP_AXI_ROOT>,
-					 <&clk IMX8MM_CLK_DISP_APB_ROOT>;
-				clock-names = "pix", "disp-axi", "disp-apb";
+					 <&clk IMX8MM_CLK_DISP_APB_ROOT>,
+					 <&clk IMX8MM_VIDEO_PLL1_OUT>;
+				clock-names = "pix", "disp-axi", "disp-apb", "video1-pll";
 				assigned-clocks = <&clk IMX8MM_CLK_LCDIF_PIXEL>,
 						  <&clk IMX8MM_CLK_DISP_AXI>,
 						  <&clk IMX8MM_CLK_DISP_APB>;
@@ -1137,6 +1202,7 @@
 
 			mipi_dsi: mipi_dsi@32e10000 {
 				#address-cells = <1>;
+				#clock-cells = <1>;
 				#size-cells = <0>;
 				compatible = "fsl,imx8mm-mipi-dsim";
 				reg = <0x32e10000 0x400>;
@@ -1169,6 +1235,7 @@
 					<&clk IMX8MM_CLK_CSI1_ROOT>,
 					<&clk IMX8MM_CLK_DISP_APB_ROOT>;
 				clock-names = "disp-axi", "csi_mclk", "disp_dcic";
+				dma-coherent;
 				power-domains = <&dispmix_pd>;
 				status = "disabled";
 			};
@@ -1193,7 +1260,7 @@
 				reg = <0x32e28000 0x100>;
 			};
 
-			display-subsystem {
+			display_subsystem: display-subsystem {
 				compatible = "fsl,imx-display-subsystem";
 				ports = <&lcdif_disp0>;
 			};

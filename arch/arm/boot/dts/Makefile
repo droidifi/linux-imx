@@ -375,6 +375,8 @@ dtb-$(CONFIG_SOC_IMX51) += \
 	imx51-babbage.dtb \
 	imx51-digi-connectcore-jsk.dtb \
 	imx51-eukrea-mbimxsd51-baseboard.dtb \
+	imx51-nitrogen51_e.dtb \
+	imx51-nitrogen51_vm.dtb \
 	imx51-ts4800.dtb \
 	imx51-zii-rdu1.dtb \
 	imx51-zii-scu2-mezz.dtb \
@@ -396,11 +398,17 @@ dtb-$(CONFIG_SOC_IMX53) += \
 	imx53-usbarmory.dtb \
 	imx53-voipac-bsb.dtb
 dtb-$(CONFIG_SOC_IMX6Q) += \
+	imx6dl-a.dtb \
+	imx6dl-acl.dtb \
+	imx6dl-ap.dtb \
 	imx6dl-apf6dev.dtb \
 	imx6dl-aristainetos_4.dtb \
 	imx6dl-aristainetos_7.dtb \
 	imx6dl-aristainetos2_4.dtb \
 	imx6dl-aristainetos2_7.dtb \
+	imx6dl-ash.dtb \
+	imx6dl-ash2.dtb \
+	imx6dl-bt.dtb \
 	imx6dl-colibri-eval-v3.dtb \
 	imx6dl-cubox-i.dtb \
 	imx6dl-cubox-i-emmc-som-v15.dtb \
@@ -418,6 +426,8 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6dl-gw560x.dtb \
 	imx6dl-gw5903.dtb \
 	imx6dl-gw5904.dtb \
+	imx6dl-hl.dtb \
+	imx6dl-hp.dtb \
 	imx6dl-hummingboard.dtb \
 	imx6dl-hummingboard-emmc-som-v15.dtb \
 	imx6dl-hummingboard-som-v15.dtb \
@@ -427,11 +437,25 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6dl-icore.dtb \
 	imx6dl-icore-mipi.dtb \
 	imx6dl-icore-rqs.dtb \
+	imx6dl-lshore.dtb \
+	imx6dl-lshore-r0.dtb \
+	imx6dl-lshore-r1.dtb \
 	imx6dl-mamoj.dtb \
+	imx6dl-mcs.dtb \
+	imx6dl-mtp.dtb \
+	imx6dl-neol.dtb \
 	imx6dl-nit6xlite.dtb \
+	imx6dl-nit6xlite-access.dtb \
+	imx6dl-nitrogen6_max.dtb \
+	imx6dl-nitrogen6_som2.dtb \
+	imx6dl-nitrogen6_vm.dtb \
+	imx6dl-nitrogen6_vm-magstripe.dtb \
+	imx6dl-nitrogen6_vm-pt.dtb \
 	imx6dl-nitrogen6x.dtb \
+	imx6dl-per.dtb \
 	imx6dl-phytec-mira-rdk-nand.dtb \
 	imx6dl-phytec-pbab01.dtb \
+	imx6dl-rc.dtb \
 	imx6dl-rex-basic.dtb \
 	imx6dl-riotboard.dtb \
 	imx6dl-sabreauto.dtb \
@@ -449,6 +473,7 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6dl-sabresd-pcie.dtb \
 	imx6dl-sabresd-pcie-ep.dtb \
 	imx6dl-savageboard.dtb \
+	imx6dl-sp.dtb \
 	imx6dl-ts4900.dtb \
 	imx6dl-ts7970.dtb \
 	imx6dl-tx6dl-comtft.dtb \
@@ -469,6 +494,8 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6dl-yapp4-draco.dtb \
 	imx6dl-yapp4-hydra.dtb \
 	imx6dl-yapp4-ursa.dtb \
+	imx6q-acl.dtb \
+	imx6q-ap.dtb \
 	imx6q-apalis-eval.dtb \
 	imx6q-apalis-ixora.dtb \
 	imx6q-apalis-ixora-v1.1.dtb \
@@ -477,7 +504,15 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-b450v3.dtb \
 	imx6q-b650v3.dtb \
 	imx6q-b850v3.dtb \
+	imx6q-bt.dtb \
+	imx6q-bt2.dtb \
+	imx6q-cid.dtb \
+	imx6q-cid2.dtb \
+	imx6q-cid_tab.dtb \
 	imx6q-cm-fx6.dtb \
+	imx6q-cnt.dtb \
+	imx6q-cob.dtb \
+	imx6q-cob2.dtb \
 	imx6q-cubox-i.dtb \
 	imx6q-cubox-i-emmc-som-v15.dtb \
 	imx6q-cubox-i-som-v15.dtb \
@@ -487,6 +522,7 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-dmo-edmqmx6.dtb \
 	imx6q-dms-ba16.dtb \
 	imx6q-emcon-avari.dtb \
+	imx6q-eo.dtb \
 	imx6q-evi.dtb \
 	imx6q-gk802.dtb \
 	imx6q-gw51xx.dtb \
@@ -501,6 +537,8 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-gw5903.dtb \
 	imx6q-gw5904.dtb \
 	imx6q-h100.dtb \
+	imx6q-h4.dtb \
+	imx6q-hp.dtb \
 	imx6q-hummingboard.dtb \
 	imx6q-hummingboard-emmc-som-v15.dtb \
 	imx6q-hummingboard-som-v15.dtb \
@@ -512,18 +550,40 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-icore-ofcap10.dtb \
 	imx6q-icore-ofcap12.dtb \
 	imx6q-icore-rqs.dtb \
+	imx6q-insp.dtb \
+	imx6q-ioc.dtb \
+	imx6q-jlm.dtb \
 	imx6q-kp-tpc.dtb \
+	imx6q-ls.dtb \
+	imx6q-lshore-r1.dtb \
+	imx6q-ltch.dtb \
 	imx6q-marsboard.dtb \
 	imx6q-mccmon6.dtb \
+	imx6q-mcs.dtb \
+	imx6q-mtp.dtb \
+	imx6q-neol.dtb \
+	imx6q-neol-test.dtb \
 	imx6q-nitrogen6x.dtb \
+	imx6q-nitrogen6x-st7789.dtb \
+	imx6q-nitrogen6x-careview.dtb \
+	imx6q-nitrogen6x-cwc.dtb \
+	imx6q-nitrogen6x-cwc-ov5640.dtb \
 	imx6q-nitrogen6_max.dtb \
+	imx6q-nitrogen6_max-apex.dtb \
+	imx6q-nitrogen6_max-clearview.dtb \
+	imx6q-nitrogen6_max-lantech.dtb \
+	imx6q-nitrogen6_max-st7789.dtb \
 	imx6q-nitrogen6_som2.dtb \
+	imx6q-nitrogen6_som2-ta.dtb \
 	imx6q-novena.dtb \
+	imx6q-nw2.dtb \
+	imx6q-per.dtb \
 	imx6q-phytec-mira-rdk-emmc.dtb \
 	imx6q-phytec-mira-rdk-nand.dtb \
 	imx6q-phytec-pbab01.dtb \
 	imx6q-pistachio.dtb \
 	imx6q-rex-pro.dtb \
+	imx6q-s.dtb \
 	imx6q-sabreauto.dtb \
 	imx6q-sabreauto-enetirq.dtb \
 	imx6q-sabreauto-flexcan1.dtb \
@@ -541,6 +601,9 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-sabresd-pcie-ep.dtb \
 	imx6q-savageboard.dtb \
 	imx6q-sbc6x.dtb \
+	imx6q-ses.dtb \
+	imx6q-snap.dtb \
+	imx6q-ta.dtb \
 	imx6q-tbs2910.dtb \
 	imx6q-ts4900.dtb \
 	imx6q-ts7970.dtb \
@@ -554,12 +617,17 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-tx6q-1110.dtb \
 	imx6q-tx6q-11x0-mb7.dtb \
 	imx6q-udoo.dtb \
+	imx6q-usd.dtb \
+	imx6q-usd_mr2.dtb \
+	imx6q-utc.dtb \
 	imx6q-utilite-pro.dtb \
 	imx6q-var-dt6customboard.dtb \
+	imx6q-vp.dtb \
 	imx6q-wandboard.dtb \
 	imx6q-wandboard-revb1.dtb \
 	imx6q-wandboard-revd1.dtb \
 	imx6q-zii-rdu2.dtb \
+	imx6qp-mtp.dtb \
 	imx6qp-nitrogen6_max.dtb \
 	imx6qp-nitrogen6_som2.dtb \
 	imx6qp-phytec-mira-rdk-nand.dtb \
@@ -591,6 +659,8 @@ dtb-$(CONFIG_SOC_IMX6SLL) += \
 	imx6sll-evk-btwifi.dtb
 dtb-$(CONFIG_SOC_IMX6SX) += \
 	imx6sx-nitrogen6sx.dtb \
+	imx6sx-nitrogen6sx-m4.dtb \
+	imx6sx-nitrogen6_scm.dtb \
 	imx6sx-sabreauto.dtb \
 	imx6sx-sdb-reva.dtb \
 	imx6sx-sdb-reva-ldo.dtb \
@@ -606,7 +676,10 @@ dtb-$(CONFIG_SOC_IMX6SX) += \
 	imx6sx-softing-vining-2000.dtb \
 	imx6sx-udoo-neo-basic.dtb \
 	imx6sx-udoo-neo-extended.dtb \
-	imx6sx-udoo-neo-full.dtb
+	imx6sx-udoo-neo-full.dtb \
+	imx6sx-ys.dtb \
+	imx6sx-ys-m4.dtb \
+
 dtb-$(CONFIG_SOC_IMX6UL) += \
 	imx6ul-14x14-evk.dtb \
 	imx6ul-14x14-evk-csi.dtb \
@@ -649,6 +722,7 @@ dtb-$(CONFIG_SOC_IMX6UL) += \
 	imx6ull-phytec-segin-ff-rdk-nand.dtb \
 	imx6ull-phytec-segin-ff-rdk-emmc.dtb \
 	imx6ull-phytec-segin-lc-rdk-nand.dtb \
+	imx6ull-rta.dtb \
 	imx6ulz-14x14-evk.dtb \
 	imx6ulz-14x14-evk-btwifi.dtb \
 	imx6ulz-14x14-evk-gpmi-weim.dtb \
@@ -660,6 +734,7 @@ dtb-$(CONFIG_SOC_IMX7D) += \
 	imx7d-mba7.dtb \
 	imx7d-meerkat96.dtb \
 	imx7d-nitrogen7.dtb \
+	imx7d-nitrogen7-m4.dtb \
 	imx7d-pico-hobbit.dtb \
 	imx7d-pico-pi.dtb \
 	imx7d-sbc-imx7.dtb \

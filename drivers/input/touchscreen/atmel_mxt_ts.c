@@ -12,6 +12,7 @@
 
 #include <linux/acpi.h>
 #include <linux/dmi.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/completion.h>
@@ -626,6 +627,7 @@ static int __mxt_read_reg(struct i2c_client *client,
 	struct i2c_msg xfer[2];
 	u8 buf[2];
 	int ret;
+	int retry = 0;
 
 	buf[0] = reg & 0xff;
 	buf[1] = (reg >> 8) & 0xff;
@@ -642,16 +644,21 @@ static int __mxt_read_reg(struct i2c_client *client,
 	xfer[1].len = len;
 	xfer[1].buf = val;
 
-	ret = i2c_transfer(client->adapter, xfer, 2);
-	if (ret == 2) {
-		ret = 0;
-	} else {
-		if (ret >= 0)
-			ret = -EIO;
-		dev_err(&client->dev, "%s: i2c transfer failed (%d)\n",
-			__func__, ret);
-	}
+	do {
+		ret = i2c_transfer(client->adapter, xfer, 2);
+		if (ret == 2)
+			return 0;
 
+		if (!retry) {
+			dev_err(&client->dev,
+				"%s: i2c transfer failed (%d) reg=0x%x len=%d\n",
+				__func__, ret, reg, len);
+		}
+		msleep(100);
+	} while (retry++ < 10);
+
+	if (ret >= 0)
+		ret = -EIO;
 	return ret;
 }
 
@@ -661,27 +668,43 @@ static int __mxt_write_reg(struct i2c_client *client, u16 reg, u16 len,
 	u8 *buf;
 	size_t count;
 	int ret;
+	u8 *p;
+	u8 buffer[32];
+	int retry = 0;
 
 	count = len + 2;
-	buf = kmalloc(count, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
+	if (sizeof(buffer) < count) {
+		p = buf = kmalloc(count, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	} else {
+		p = NULL;
+		buf = buffer;
+	}
 
 	buf[0] = reg & 0xff;
 	buf[1] = (reg >> 8) & 0xff;
 	memcpy(&buf[2], val, len);
 
-	ret = i2c_master_send(client, buf, count);
-	if (ret == count) {
-		ret = 0;
-	} else {
+	do {
+		ret = i2c_master_send(client, buf, count);
+		if (ret == count) {
+			ret = 0;
+			break;
+		}
+
+		if (!retry) {
+			dev_err(&client->dev,
+				"%s: i2c send failed (%d) reg=0x%x len=%d val=%x\n",
+				__func__, ret, reg, len, buf[2]);
+		}
 		if (ret >= 0)
 			ret = -EIO;
-		dev_err(&client->dev, "%s: i2c send failed (%d)\n",
-			__func__, ret);
-	}
+		msleep(100);
+	} while (retry++ < 10);
 
-	kfree(buf);
+	if (p)
+		kfree(p);
 	return ret;
 }
 
@@ -2007,7 +2030,7 @@ static int mxt_initialize_input_device(struct mxt_data *data)
 	input_dev->open = mxt_input_open;
 	input_dev->close = mxt_input_close;
 
-	input_set_capability(input_dev, EV_KEY, BTN_TOUCH);
+	input_set_capability(input_dev, EV_KEY | EV_ABS, BTN_TOUCH);
 
 	/* For single touch */
 	input_set_abs_params(input_dev, ABS_X, 0, data->max_x, 0, 0);
@@ -2210,7 +2233,6 @@ recheck:
 
 #ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT_T37
 static const struct v4l2_file_operations mxt_video_fops = {
-	.owner = THIS_MODULE,
 	.open = v4l2_fh_open,
 	.release = vb2_fop_release,
 	.unlocked_ioctl = video_ioctl2,
@@ -3033,11 +3055,31 @@ static const struct dmi_system_id chromebook_T9_suspend_dmi[] = {
 	{ }
 };
 
+/* Return 0 if detection is successful, -ENODEV otherwise */
+static int detect_device(struct i2c_client *client)
+{
+	struct i2c_adapter *adapter = client->adapter;
+	char buffer;
+	struct i2c_msg pkt = {
+		client->addr,
+		I2C_M_RD,
+		sizeof(buffer),
+		&buffer
+	};
+	if (i2c_transfer(adapter, &pkt, 1) != 1)
+		return -ENODEV;
+	return 0;
+}
+
 static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct mxt_data *data;
+	struct gpio_desc *reset_gpio;
 	int error;
+	unsigned long max_timeout;
 
+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
+		return -ENODEV;
 	/*
 	 * Ignore devices that do not have device properties attached to
 	 * them, as we need help determining whether we are dealing with
@@ -3063,6 +3105,30 @@ static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (ACPI_COMPANION(&client->dev) && client->addr < 0x40)
 		return -ENXIO;
 
+	reset_gpio = devm_gpiod_get_optional(&client->dev,
+						   "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(reset_gpio)) {
+		error = PTR_ERR(reset_gpio);
+		dev_err(&client->dev, "Failed to get reset gpio: %d\n", error);
+		return error;
+	}
+
+	if (reset_gpio) {
+		msleep(MXT_RESET_TIME + 100);	/* +70 fails, +75 works */
+		gpiod_set_value(reset_gpio, 0);
+		msleep(100);
+	}
+	max_timeout = jiffies + msecs_to_jiffies(MXT_RESET_TIMEOUT);
+	while (1) {
+		error = detect_device(client);
+		if (!error)
+			break;
+		if (time_after(jiffies, max_timeout)) {
+			dev_err(&client->dev, "not detected\n");
+			return error;
+		}
+		msleep(100);
+	}
 	data = devm_kzalloc(&client->dev, sizeof(struct mxt_data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
@@ -3072,6 +3138,7 @@ static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	data->client = client;
 	data->irq = client->irq;
+	data->reset_gpio = reset_gpio;
 	i2c_set_clientdata(client, data);
 
 	init_completion(&data->bl_completion);
@@ -3085,14 +3152,6 @@ static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (error)
 		return error;
 
-	data->reset_gpio = devm_gpiod_get_optional(&client->dev,
-						   "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(data->reset_gpio)) {
-		error = PTR_ERR(data->reset_gpio);
-		dev_err(&client->dev, "Failed to get reset gpio: %d\n", error);
-		return error;
-	}
-
 	error = devm_request_threaded_irq(&client->dev, client->irq,
 					  NULL, mxt_interrupt, IRQF_ONESHOT,
 					  client->name, data);
@@ -3102,12 +3161,6 @@ static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	}
 
 	disable_irq(client->irq);
-
-	if (data->reset_gpio) {
-		msleep(MXT_RESET_GPIO_TIME);
-		gpiod_set_value(data->reset_gpio, 1);
-		msleep(MXT_RESET_INVALID_CHG);
-	}
 
 	error = mxt_initialize(data);
 	if (error)
@@ -3125,6 +3178,8 @@ static int mxt_probe(struct i2c_client *client, const struct i2c_device_id *id)
 err_free_object:
 	mxt_free_input_device(data);
 	mxt_free_object_table(data);
+	if (data->reset_gpio)
+		gpiod_set_value(data->reset_gpio, 1);	/* Set active */
 	return error;
 }
 
@@ -3133,6 +3188,8 @@ static int mxt_remove(struct i2c_client *client)
 	struct mxt_data *data = i2c_get_clientdata(client);
 
 	disable_irq(data->irq);
+	if (data->reset_gpio)
+		gpiod_set_value(data->reset_gpio, 1);	/* Set active */
 	sysfs_remove_group(&client->dev.kobj, &mxt_attr_group);
 	mxt_free_input_device(data);
 	mxt_free_object_table(data);

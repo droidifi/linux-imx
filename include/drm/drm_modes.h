@@ -426,6 +426,8 @@ struct drm_display_mode {
 	 * avoid overhead of protecting it by mode_config.mutex.
 	 */
 	struct list_head export_head;
+	unsigned int min_hs_clock_multiple;
+	unsigned int mipi_dsi_multiple;
 };
 
 /**

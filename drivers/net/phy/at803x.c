@@ -87,6 +87,7 @@ MODULE_LICENSE("GPL");
 struct at803x_priv {
 	bool phy_reset:1;
 	u32 quirks;
+	u32 phy_clock_out;
 };
 
 struct at803x_context {
@@ -154,6 +155,37 @@ static inline int at803x_set_vddio_1p8v(struct phy_device *phydev)
 {
 	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_31, 0,
 					AT803X_VDDIO_1P8V_EN);
+}
+
+static int at803x_select_phy_clock_out(struct phy_device *phydev, u32 freq)
+{
+	int ret;
+	u32 regval;
+
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL, 0x0007);
+	if (ret < 0)
+		return ret;
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL_DATA, 0x8016);
+	if (ret < 0)
+		return ret;
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL, 0x4007);
+	regval = phy_read(phydev, AT803X_MMD_ACCESS_CONTROL_DATA);
+	if (ret < 0)
+		return ret;
+	regval &= ~0x11c;
+	regval |= 0x80;	/* 1/2 drive strength */
+	if (freq >= 125000000) {
+		regval |= 0x18;
+	} else if (freq >= 62500000) {
+		regval |= 0x10;
+	} else if (freq >= 50000000) {
+		regval |= 0x08;
+	} else if (freq == 0) {
+		/* 1/4 drive strength since off was requested */
+		regval |= 0x180;
+	}
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL_DATA, regval);
+	return ret;
 }
 
 static int at803x_disable_eee(struct phy_device *phydev)
@@ -302,6 +334,11 @@ static int at803x_probe(struct phy_device *phydev)
 	if (of_property_read_bool(dev->of_node, "at803x,vddio-1p8v"))
 		priv->quirks |= AT803X_VDDIO_1P8V;
 
+	if (of_property_read_u32(dev->of_node, "at803x,phy-clock-out", &priv->phy_clock_out))
+		priv->phy_clock_out = 0xffffffff;
+	else
+		dev_info(dev, "%s, phy-clock-out= %d\n", __func__, priv->phy_clock_out);
+
 	phydev->priv = priv;
 
 	return 0;
@@ -337,7 +374,8 @@ static int at803x_config_init(struct phy_device *phydev)
 	 *   after SW reset: RX delay enabled, while TX delay retains the
 	 *   value before reset.
 	 */
-	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII ||
+	    phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
 	    phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
 		ret = at803x_enable_rx_delay(phydev);
 	else
@@ -345,7 +383,8 @@ static int at803x_config_init(struct phy_device *phydev)
 	if (ret < 0)
 		return ret;
 
-	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII ||
+	    phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
 	    phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID)
 		ret = at803x_enable_tx_delay(phydev);
 	else
@@ -362,6 +401,11 @@ static int at803x_config_init(struct phy_device *phydev)
 		if (ret < 0)
 			return ret;
 	}
+	if (priv->phy_clock_out != 0xffffffff) {
+		ret = at803x_select_phy_clock_out(phydev, priv->phy_clock_out);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "at803x_select_phy_clock_out failed\n");
+	}
 
 	return ret;
 }
@@ -370,6 +414,7 @@ static int at803x_ack_interrupt(struct phy_device *phydev)
 {
 	int err;
 
+	/* bit[7..0] int status, which is a read and clear register. */
 	err = phy_read(phydev, AT803X_INTR_STATUS);
 
 	return (err < 0) ? err : 0;
@@ -381,18 +426,21 @@ static int at803x_config_intr(struct phy_device *phydev)
 	int value;
 
 	value = phy_read(phydev, AT803X_INTR_ENABLE);
+	if (value < 0)
+		value = 0;
 
-	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
-		value |= AT803X_INTR_ENABLE_AUTONEG_ERR;
-		value |= AT803X_INTR_ENABLE_SPEED_CHANGED;
-		value |= AT803X_INTR_ENABLE_DUPLEX_CHANGED;
-		value |= AT803X_INTR_ENABLE_LINK_FAIL;
-		value |= AT803X_INTR_ENABLE_LINK_SUCCESS;
+#define INT_CONDITIONS (AT803X_INTR_ENABLE_AUTONEG_ERR | \
+			AT803X_INTR_ENABLE_SPEED_CHANGED | \
+			AT803X_INTR_ENABLE_DUPLEX_CHANGED | \
+			AT803X_INTR_ENABLE_LINK_FAIL | \
+			AT803X_INTR_ENABLE_LINK_SUCCESS)
 
-		err = phy_write(phydev, AT803X_INTR_ENABLE, value);
-	}
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED)
+		value |= INT_CONDITIONS;
 	else
-		err = phy_write(phydev, AT803X_INTR_ENABLE, 0);
+		value &= ~INT_CONDITIONS;
+
+	err = phy_write(phydev, AT803X_INTR_ENABLE, value);
 
 	return err;
 }
@@ -555,8 +603,8 @@ static struct phy_driver at803x_driver[] = {
 	/* PHY_GBIT_FEATURES */
 	.read_status		= at803x_read_status,
 	.aneg_done		= at803x_aneg_done,
-	.ack_interrupt		= &at803x_ack_interrupt,
-	.config_intr		= &at803x_config_intr,
+	.ack_interrupt		= at803x_ack_interrupt,
+	.config_intr		= at803x_config_intr,
 } };
 
 module_phy_driver(at803x_driver);

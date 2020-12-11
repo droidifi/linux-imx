@@ -225,6 +225,8 @@ static void mxc_mipi_csi2_hc_config(struct mxc_mipi_csi2_dev *csi2dev)
 	/* vid_vc */
 	writel(1, csi2dev->base_regs + 0x184);
 	writel(csi2dev->send_level, csi2dev->base_regs + 0x188);
+	v4l2_dbg(1, debug, &csi2dev->v4l2_dev, "%s: lanes=%d\n",
+		__func__, csi2dev->num_lanes);
 }
 
 static int mipi_csi2_clk_init(struct mxc_mipi_csi2_dev *csi2dev)
@@ -287,6 +289,26 @@ static int mipi_csi2_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	return 0;
 }
 
+static int mipi_csis_s_mbus_config(struct v4l2_subdev *sd,
+				const struct v4l2_mbus_config *cfg)
+{
+	struct mxc_mipi_csi2_dev *csi2dev = sd_to_mxc_mipi_csi2_dev(sd);
+
+	if (cfg->flags & V4L2_MBUS_CSI2_4_LANE)
+		csi2dev->num_lanes = 4;
+	else if (cfg->flags & V4L2_MBUS_CSI2_3_LANE)
+		csi2dev->num_lanes = 3;
+	else if (cfg->flags & V4L2_MBUS_CSI2_2_LANE)
+		csi2dev->num_lanes = 2;
+	else if (cfg->flags & V4L2_MBUS_CSI2_1_LANE)
+		csi2dev->num_lanes = 1;
+	else
+		return -EINVAL;
+	dev_dbg(&csi2dev->pdev->dev, "%s: lanes=%d\n",
+		__func__, csi2dev->num_lanes);
+	return 0;
+}
+
 /*
  * V4L2 subdev operations
  */
@@ -307,8 +329,16 @@ static int mipi_csi2_s_stream(struct v4l2_subdev *sd, int enable)
 
 	if (enable) {
 		if (!csi2dev->running) {
+			struct v4l2_mbus_config cfg;
+
 			pm_runtime_get_sync(dev);
 			mxc_mipi_csi2_phy_reset(csi2dev);
+
+			cfg.flags = 0;
+			v4l2_subdev_call(sensor_sd, video, g_mbus_config, &cfg);
+			if (cfg.flags)
+				mipi_csis_s_mbus_config(sd, &cfg);
+
 			mxc_mipi_csi2_hc_config(csi2dev);
 			mxc_mipi_csi2_enable(csi2dev);
 			mxc_mipi_csi2_reg_dump(csi2dev);
@@ -427,7 +457,7 @@ static struct v4l2_subdev_core_ops mipi_csi2_core_ops = {
 
 static struct v4l2_subdev_video_ops mipi_csi2_video_ops = {
 	.s_stream = mipi_csi2_s_stream,
-
+	.s_mbus_config = mipi_csis_s_mbus_config,
 	.s_parm = mipi_csis_s_parm,
 	.g_parm = mipi_csis_g_parm,
 };
@@ -493,8 +523,22 @@ static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 	return 0;
 }
 
+static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
+{
+	struct mxc_mipi_csi2_dev *csi_dev = notifier_to_mipi_dev(notifier);
+	struct v4l2_device *v4l2_dev = &csi_dev->v4l2_dev;
+	int ret;
+
+	ret = v4l2_device_register_subdev_nodes(v4l2_dev);
+	if (ret)
+		v4l2_info(v4l2_dev, "Failed to register subdev nodes\n");
+
+	return ret;
+}
+
 static const struct v4l2_async_notifier_operations subdev_notifier_ops = {
 	.bound = subdev_notifier_bound,
+	.complete = subdev_notifier_complete,
 };
 
 static int mipi_csis_subdev_host(struct mxc_mipi_csi2_dev *csi2dev)

@@ -16,6 +16,7 @@
 #include <linux/i2c.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/serial_core.h>
@@ -321,6 +322,7 @@ struct sc16is7xx_port {
 	const struct sc16is7xx_devtype	*devtype;
 	struct regmap			*regmap;
 	struct clk			*clk;
+	struct gpio_desc		*reset_gpio;
 #ifdef CONFIG_GPIOLIB
 	struct gpio_chip		gpio;
 #endif
@@ -493,12 +495,21 @@ static int sc16is7xx_set_baud(struct uart_port *port, int baud)
 	struct sc16is7xx_port *s = dev_get_drvdata(port->dev);
 	u8 lcr;
 	u8 prescaler = 0;
-	unsigned long clk = port->uartclk, div = clk / 16 / baud;
+	unsigned preshift = 0;
+	unsigned long clk = port->uartclk;
+	unsigned long div = clk / baud;
 
-	if (div > 0xffff) {
+	if (div > 0xfffff) {
 		prescaler = SC16IS7XX_MCR_CLKSEL_BIT;
-		div /= 4;
+		preshift = 2;
+		div >>= 2;
 	}
+	div += 8;
+	if (div > 0xfffff)
+		div = 0xfffff;
+	div &= ~0xf;
+	if (!div)
+		div += 16;
 
 	/* In an amazing feat of design, the Enhanced Features Register shares
 	 * the address of the Interrupt Identification Register, and is
@@ -542,14 +553,15 @@ static int sc16is7xx_set_baud(struct uart_port *port, int baud)
 
 	/* Write the new divisor */
 	regcache_cache_bypass(s->regmap, true);
-	sc16is7xx_port_write(port, SC16IS7XX_DLH_REG, div / 256);
-	sc16is7xx_port_write(port, SC16IS7XX_DLL_REG, div % 256);
+	sc16is7xx_port_write(port, SC16IS7XX_DLH_REG, div >> 12);
+	sc16is7xx_port_write(port, SC16IS7XX_DLL_REG, (div >> 4) & 0xff);
 	regcache_cache_bypass(s->regmap, false);
 
 	/* Put LCR back to the normal mode */
 	sc16is7xx_port_write(port, SC16IS7XX_LCR_REG, lcr);
 
-	return DIV_ROUND_CLOSEST(clk / 16, div);
+	div <<= preshift;
+	return DIV_ROUND_CLOSEST(clk, div);
 }
 
 static void sc16is7xx_handle_rx(struct uart_port *port, unsigned int rxlen,
@@ -1183,6 +1195,7 @@ static int sc16is7xx_probe(struct device *dev,
 	u32 uartclk = 0;
 	int i, ret;
 	struct sc16is7xx_port *s;
+	struct gpio_desc *gpio;
 
 	if (IS_ERR(regmap))
 		return PTR_ERR(regmap);
@@ -1229,6 +1242,11 @@ static int sc16is7xx_probe(struct device *dev,
 		goto out_clk;
 	}
 	sched_setscheduler(s->kworker_task, SCHED_FIFO, &sched_param);
+	gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(gpio))
+		return PTR_ERR(gpio);
+
+	s->reset_gpio = gpio;
 
 #ifdef CONFIG_GPIOLIB
 	if (devtype->nr_gpio) {
@@ -1249,6 +1267,8 @@ static int sc16is7xx_probe(struct device *dev,
 	}
 #endif
 
+	gpiod_set_value_cansleep(s->reset_gpio, 0);
+	msleep(1);
 	/* reset device, purging any pending irq / data */
 	regmap_write(s->regmap, SC16IS7XX_IOCONTROL_REG << SC16IS7XX_REG_SHIFT,
 			SC16IS7XX_IOCONTROL_SRESET_BIT);
@@ -1350,6 +1370,7 @@ static int sc16is7xx_remove(struct device *dev)
 
 	if (!IS_ERR(s->clk))
 		clk_disable_unprepare(s->clk);
+	gpiod_set_value_cansleep(s->reset_gpio, 1);
 
 	return 0;
 }

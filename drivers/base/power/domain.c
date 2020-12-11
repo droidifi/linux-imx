@@ -2136,7 +2136,7 @@ int of_genpd_add_provider_onecell(struct device_node *np,
 			 * Save table for faster processing while setting
 			 * performance state.
 			 */
-			genpd->opp_table = dev_pm_opp_get_opp_table_indexed(&genpd->dev, i);
+			genpd->opp_table = dev_pm_opp_get_opp_table_indexed(&genpd->dev, np, i);
 			WARN_ON(!genpd->opp_table);
 		}
 
@@ -2720,6 +2720,9 @@ unsigned int pm_genpd_opp_to_performance_state(struct device *genpd_dev,
 	genpd = container_of(genpd_dev, struct generic_pm_domain, dev);
 
 	if (unlikely(!genpd->opp_to_performance_state))
+		return 0;
+
+	if (unlikely(!genpd->lock_ops))
 		return 0;
 
 	genpd_lock(genpd);

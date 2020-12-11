@@ -170,25 +170,21 @@ static int imx_pmx_set_one_pin_mmio(struct imx_pinctrl *ipctl,
 	pin_id = pin->pin;
 	pin_reg = &ipctl->pin_regs[pin_id];
 
-	if (pin_reg->mux_reg == -1) {
-		dev_dbg(ipctl->dev, "Pin(%s) does not support mux function\n",
-			info->pins[pin_id].name);
-		return 0;
-	}
+	if (pin_reg->mux_reg != -1) {
+		if (info->flags & SHARE_MUX_CONF_REG) {
+			u32 reg;
 
-	if (info->flags & SHARE_MUX_CONF_REG) {
-		u32 reg;
-
-		reg = readl(ipctl->base + pin_reg->mux_reg);
-		reg &= ~info->mux_mask;
-		reg |= (pin_mmio->mux_mode << info->mux_shift);
-		writel(reg, ipctl->base + pin_reg->mux_reg);
-		dev_dbg(ipctl->dev, "write: offset 0x%x val 0x%x\n",
-			pin_reg->mux_reg, reg);
-	} else {
-		writel(pin_mmio->mux_mode, ipctl->base + pin_reg->mux_reg);
-		dev_dbg(ipctl->dev, "write: offset 0x%x val 0x%x\n",
-			pin_reg->mux_reg, pin_mmio->mux_mode);
+			reg = readl(ipctl->base + pin_reg->mux_reg);
+			reg &= ~info->mux_mask;
+			reg |= (pin_mmio->mux_mode << info->mux_shift);
+			writel(reg, ipctl->base + pin_reg->mux_reg);
+			dev_dbg(ipctl->dev, "write: offset 0x%x val 0x%x\n",
+				pin_reg->mux_reg, reg);
+		} else {
+			writel(pin_mmio->mux_mode, ipctl->base + pin_reg->mux_reg);
+			dev_dbg(ipctl->dev, "write: offset 0x%x val 0x%x\n",
+				pin_reg->mux_reg, pin_mmio->mux_mode);
+		}
 	}
 
 	/*
@@ -774,16 +770,6 @@ static int imx_pinctrl_probe_dt(struct platform_device *pdev,
 	return 0;
 }
 
-/*
- * imx_free_resources() - free memory used by this driver
- * @info: info driver instance
- */
-static void imx_free_resources(struct imx_pinctrl *ipctl)
-{
-	if (ipctl->pctl)
-		pinctrl_unregister(ipctl->pctl);
-}
-
 int imx_pinctrl_probe(struct platform_device *pdev,
 		      const struct imx_pinctrl_soc_info *info)
 {
@@ -874,23 +860,18 @@ int imx_pinctrl_probe(struct platform_device *pdev,
 					     &ipctl->pctl);
 	if (ret) {
 		dev_err(&pdev->dev, "could not register IMX pinctrl driver\n");
-		goto free;
+		return ret;
 	}
 
 	ret = imx_pinctrl_probe_dt(pdev, ipctl);
 	if (ret) {
 		dev_err(&pdev->dev, "fail to probe dt properties\n");
-		goto free;
+		return ret;
 	}
 
 	dev_info(&pdev->dev, "initialized IMX pinctrl driver\n");
 
 	return pinctrl_enable(ipctl->pctl);
-
-free:
-	imx_free_resources(ipctl);
-
-	return ret;
 }
 EXPORT_SYMBOL_GPL(imx_pinctrl_probe);
 

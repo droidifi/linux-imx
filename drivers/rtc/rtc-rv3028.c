@@ -73,6 +73,8 @@
 
 #define RV3028_BACKUP_TCE		BIT(5)
 #define RV3028_BACKUP_TCR_MASK		GENMASK(1,0)
+#define RV3028_BACKUP_BSM_MASK		0x0c
+#define RV3028_BACKUP_BSM_DSM		0x0c
 
 #define OFFSET_STEP_PPT			953674
 
@@ -625,6 +627,8 @@ static int rv3028_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	rv3028->regmap = devm_regmap_init_i2c(client, &regmap_config);
+	if (IS_ERR(rv3028->regmap))
+		return PTR_ERR(rv3028->regmap);
 
 	i2c_set_clientdata(client, rv3028);
 
@@ -688,6 +692,12 @@ static int rv3028_probe(struct i2c_client *client)
 		} else {
 			dev_warn(&client->dev, "invalid trickle resistor value\n");
 		}
+	}
+
+	if (device_property_present(&client->dev, "backup-switchover-dsm")) {
+		ret = regmap_update_bits(rv3028->regmap, RV3028_BACKUP,
+				RV3028_BACKUP_BSM_MASK,
+				RV3028_BACKUP_BSM_DSM);
 	}
 
 	ret = rtc_add_group(rv3028->rtc, &rv3028_attr_group);

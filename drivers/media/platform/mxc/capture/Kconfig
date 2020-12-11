@@ -48,6 +48,12 @@ config MXC_CAMERA_OV5642
 	help
 	  If you plan to use the ov5642 Camera with your MXC system, say Y here.
 
+config MXC_CAMERA_OV5642_V2
+	tristate "OmniVision ov5642 camera support"
+	depends on VIDEO_MXC_CAPTURE && I2C
+	---help---
+	  If you plan to use the ov5642 Camera with your MXC system, say Y here.
+
 config MXC_CAMERA_OV5640_MIPI
 	tristate "OmniVision ov5640 camera support using mipi"
 	depends on !VIDEO_MXC_EMMA_CAMERA && I2C && MXC_MIPI_CSI2
@@ -72,6 +78,43 @@ config MXC_CAMERA_OV5647_MIPI
 	depends on MXC_MIPI_CSI && I2C
 	help
 	  If you plan to use the ov5647 Camera with mipi interface in your MXC system, say Y here.
+
+config MXC_VIDEO_GS2971
+	tristate "Gennum GS2971 SDI receiver"
+	depends on VIDEO_V4L2 && SPI
+	help
+	  Support for SPI bus based Gennum 2971 SDI deserializer.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called gs2971.
+
+config MXC_HDMI_CSI2_TC358743
+	tristate "Toshiba tc358743 Hdmi to CSI 2 bridge"
+	depends on !VIDEO_MXC_EMMA_CAMERA && I2C
+	select MXC_MIPI_CSI2 if ARCH_MX6Q
+	select MXC_CAMERA_SENSOR_CLK
+	---help---
+	  Toshina HDMI to MIPI-CSI2 bridge
+
+config TC358743_AUDIO
+	bool "Audio support for Toshiba tc358743"
+	depends on MXC_HDMI_CSI2_TC358743
+	---help---
+	  Enables audio support from HDMI input
+
+config MXC_HDMI_CSI2_TC358743_V2
+	tristate "Toshiba tc358743 Hdmi to CSI 2 bridge(v2)"
+	depends on !VIDEO_MXC_EMMA_CAMERA && I2C
+	select MXC_MIPI_CSI2 if ARCH_MX6Q
+	select MXC_CAMERA_SENSOR_CLK
+	---help---
+	  Toshina HDMI to MIPI-CSI2 bridge for i.MX8M
+
+config TC358743_AUDIO_V2
+	bool "Audio support for Toshiba tc358743(v2)"
+	depends on MXC_HDMI_CSI2_TC358743_V2
+	---help---
+	  Enables audio support from HDMI input
 
 config MXC_TVIN_ADV7180
 	tristate "Analog Device adv7180 TV Decoder Input support"

@@ -346,13 +346,19 @@ static int encx24j600_receive_packet(struct encx24j600_priv *priv,
 
 	skb->dev = dev;
 	skb->protocol = eth_type_trans(skb, dev);
-	skb->ip_summed = CHECKSUM_COMPLETE;
+	if (skb->protocol == htons(ETH_P_IP)) {
+		if (likely(dev->features & NETIF_F_RXCSUM)) {
+			skb->csum = *(u16 *)(skb_tail_pointer(skb) - 2);
+			skb->ip_summed = CHECKSUM_COMPLETE;
+			skb_trim(skb, rsv->len - 4); /* remove fcs */
+		}
+	}
 
 	/* Maintain stats */
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += rsv->len;
 
-	netif_rx(skb);
+	netif_rx_ni(skb);
 
 	return 0;
 }

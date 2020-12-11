@@ -452,6 +452,15 @@ config IMX8QXP_ADC
 	  This driver can also be built as a module. If so, the module will be
 	  called imx8qxp_adc.
 
+config ISL28022_ADC
+	tristate "Intersil ISL28022 ADC driver"
+	depends on I2C
+	select IIO_BUFFER
+	select IIO_TRIGGERED_BUFFER
+	help
+	  Say yes here to build support for the Intersil ISL28022 adc
+	  converters.
+
 config LP8788_ADC
 	tristate "LP8788 ADC driver"
 	depends on MFD_LP8788
@@ -979,6 +988,16 @@ config TI_ADS1015
 	  This driver can also be built as a module. If so, the module will be
 	  called ti-ads1015.
 
+config TI_ADS7924
+	tristate "Texas Instruments ADS7924"
+	depends on I2C
+	help
+	  If you say yes here you get support for Texas Instruments ADS7924
+	  chip.
+
+	  This driver can also be built as a module. If so, the module will be
+	  called ti-ads7924.
+
 config TI_ADS7950
 	tristate "Texas Instruments ADS7950 ADC driver"
 	depends on SPI && GPIOLIB
@@ -1033,6 +1052,18 @@ config TI_AM335X_ADC
 
 	  To compile this driver as a module, choose M here: the module will be
 	  called ti_am335x_adc.
+
+config TI_LMP900XX
+	tristate "Texas Instruments LMP900XX"
+	depends on SPI
+	select IIO_BUFFER
+	select IIO_TRIGGERED_BUFFER
+	help
+	  If you say yes here you get support for Texas Instruments LMP900XX
+	  chips.
+
+	  This driver can also be built as a module. If so, the module will be
+	  called ti-lmp900xx.
 
 config TI_TLC4541
 	tristate "Texas Instruments TLC4541 ADC driver"

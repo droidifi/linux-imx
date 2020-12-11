@@ -13,6 +13,7 @@ obj-$(CONFIG_GENERIC_PHY)	+= phy/
 
 # GPIO must come after pinctrl as gpios may need to mux pins etc
 obj-$(CONFIG_PINCTRL)		+= pinctrl/
+obj-y				+= clk/
 obj-$(CONFIG_GPIOLIB)		+= gpio/
 obj-y				+= pwm/
 
@@ -33,7 +34,6 @@ obj-$(CONFIG_SFI)		+= sfi/
 obj-$(CONFIG_PNP)		+= pnp/
 obj-y				+= amba/
 
-obj-y				+= clk/
 # Many drivers will want to use DMA so this has to be made available
 # really early.
 obj-$(CONFIG_DMADEVICES)	+= dma/
@@ -109,8 +109,8 @@ obj-$(CONFIG_OF)		+= usb/
 obj-$(CONFIG_SERIO)		+= input/serio/
 obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
-obj-$(CONFIG_RTC_LIB)		+= rtc/
 obj-y				+= i2c/ i3c/ media/
+obj-$(CONFIG_RTC_LIB)		+= rtc/
 obj-$(CONFIG_PPS)		+= pps/
 obj-y				+= ptp/
 obj-$(CONFIG_W1)		+= w1/
@@ -187,3 +187,4 @@ obj-$(CONFIG_GNSS)		+= gnss/
 obj-$(CONFIG_INTERCONNECT)	+= interconnect/
 obj-$(CONFIG_COUNTER)		+= counter/
 obj-y		 		+= mxc/
+obj-$(CONFIG_BATTERY_SAMSUNG)   += battery/

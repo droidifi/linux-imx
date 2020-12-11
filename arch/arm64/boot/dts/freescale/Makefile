@@ -53,23 +53,47 @@ dtb-$(CONFIG_ARCH_MXC) += imx8mm-evk.dtb imx8mm-evk-rpmsg.dtb imx8mm-evk-rm67191
 			  imx8mm-ddr4-evk-rm67191.dtb imx8mm-evk-revb.dtb imx8mm-ddr4-evk-revb.dtb \
 			  imx8mm-ddr4-evk-revb-rm67191.dtb imx8mm-ddr3l-val.dtb \
 			  imx8mm-evk-pcie-ep.dtb imx8mm-ddr4-evk-pcie-ep.dtb \
-			  imx8mm-evk-usd-wifi.dtb
+			  imx8mm-evk-usd-wifi.dtb \
+			  imx8mm-dwe.dtb \
+			  imx8mm-hl8mm.dtb \
+			  imx8mm-moo.dtb \
+			  imx8mm-nitrogen8_lite.dtb \
+			  imx8mm-nitrogen8mm.dtb \
+			  imx8mm-nitrogen8mm-m4.dtb \
+			  imx8mm-nitrogen8mm_rev2.dtb \
+			  imx8mm-nitrogen8mm_rev2-m4.dtb \
+			  imx8mm-nitrogen8mm-tc358743.dtb \
+			  imx8mm-nitrogen8mm_som.dtb \
+			  imx8mm-nitrogen8mm_som-m4.dtb \
+			  imx8mm-nitrogen8mm_som-mcp2518fd.dtb \
+			  imx8mm-nitrogen8mm_som-mcp25625.dtb \
+			  imx8mm-nitrogen8mm_som-tc358743.dtb \
+			  imx8mm-span.dtb \
+			  imx8mm-geno.dtb \
+dtb-$(CONFIG_ARCH_MXC) += imx8mm-navq.dtb imx8mm-navq-ddr4.dtb \
 dtb-$(CONFIG_ARCH_MXC) += imx8mm-evk-ak4497.dtb imx8mm-evk-ak5558.dtb imx8mm-evk-audio-tdm.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mm-evk-8mic-revE.dtb imx8mm-evk-8mic-swpdm.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mm-ab2.dtb imx8mm-ab2-m4.dtb imx8mm-ddr4-ab2.dtb imx8mm-ddr4-ab2-m4.dtb \
 			  imx8mm-ddr4-ab2-revb.dtb imx8mm-ddr4-ab2-m4-revb.dtb
-dtb-$(CONFIG_ARCH_MXC) += imx8mm-navq.dtb imx8mm-navq-ddr4.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mn-evk.dtb imx8mn-evk-rm67191.dtb imx8mn-ddr4-evk.dtb imx8mn-ddr4-evk-ak5558.dtb \
 			  imx8mn-ddr4-evk-rm67191.dtb imx8mn-ddr4-evk-rpmsg.dtb imx8mn-ddr4-evk-usd-wifi.dtb \
 			  imx8mn-evk-ak5558.dtb imx8mn-evk-rpmsg.dtb imx8mn-evk-8mic-revE.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mn-ddr4-evk-root.dtb imx8mn-ddr4-evk-inmate.dtb imx8mn-evk-root.dtb imx8mn-evk-inmate.dtb
-dtb-$(CONFIG_ARCH_MXC) += imx8mn-ab2.dtb imx8mn-ddr4-ab2.dtb
+dtb-$(CONFIG_ARCH_MXC) += imx8mn-ab2.dtb imx8mn-ddr4-ab2.dtb \
+			  imx8mn-nitrogen8_nano.dtb \
+			  imx8mn-nitrogen8_nano-m4.dtb \
+			  imx8mn-nitrogen8mn.dtb \
+			  imx8mn-nitrogen8mn_som.dtb \
+			  imx8mn-nitrogen8mn_som-m4.dtb \
+
 dtb-$(CONFIG_ARCH_MXC) += imx8mp-evk.dtb imx8mp-evk-root.dtb imx8mp-evk-inmate.dtb imx8mp-evk-rpmsg.dtb \
 			  imx8mp-evk-rm67191.dtb imx8mp-evk-flexcan2.dtb imx8mp-evk-it6263-lvds-dual-channel.dtb \
 			  imx8mp-evk-jdi-wuxga-lvds-panel.dtb imx8mp-ab2.dtb imx8mp-evk-sof-wm8960.dtb \
 			  imx8mp-evk-dsp.dtb imx8mp-evk-ov2775.dtb imx8mp-evk-basler.dtb imx8mp-evk-pcie-ep.dtb \
 			  imx8mp-evk-spdif-lb.dtb imx8mp-evk-dsp-lpa.dtb imx8mp-evk-ov2775-ov5640.dtb \
-			  imx8mp-evk-basler-ov5640.dtb imx8mp-evk-dual-ov2775.dtb
+			  imx8mp-evk-basler-ov5640.dtb imx8mp-evk-dual-ov2775.dtb \
+			  imx8mp-nitrogen8mp.dtb \
+
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-evk.dtb imx8mq-evk-rpmsg.dtb imx8mq-evk-pcie1-m2.dtb imx8mq-evk-usd-wifi.dtb \
 			  imx8mq-evk-usdhc2-m2.dtb imx8mq-evk-pcie-ep.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-evk-ak4497.dtb imx8mq-evk-audio-tdm.dtb imx8mq-evk-pdm.dtb
@@ -79,12 +103,24 @@ dtb-$(CONFIG_ARCH_MXC) += imx8mq-hummingboard-pulse.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-evk-dcss-rm67191.dtb imx8mq-evk-dcss-adv7535.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-evk-dual-display.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-librem5-devkit.dtb
-dtb-$(CONFIG_ARCH_MXC) += imx8mq-nitrogen.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-pico-pi.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-evk-dp.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-zii-ultra-rmb3.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-zii-ultra-zest.dtb
 dtb-$(CONFIG_ARCH_MXC) += imx8mq-ddr3l-val.dtb imx8mq-ddr4-val.dtb imx8mq-ddr4-val-gpmi-nand.dtb
+dtb-$(CONFIG_ARCH_MXC) += imx8mq-bio.dtb \
+			  imx8mq-nitrogen8m.dtb \
+			  imx8mq-nitrogen8m-edp.dtb \
+			  imx8mq-nitrogen8m-m4.dtb \
+			  imx8mq-nitrogen8m-tc358743.dtb \
+			  imx8mq-nitrogen8m-tc358840.dtb \
+			  imx8mq-nitrogen8m_som.dtb \
+			  imx8mq-nitrogen8m_som-ags.dtb \
+			  imx8mq-nitrogen8m_som-ags-m4.dtb \
+			  imx8mq-nitrogen8m_som-m4.dtb \
+			  imx8mq-nitrogen8m_som_sd.dtb \
+			  imx8mq-son.dtb \
+
 dtb-$(CONFIG_ARCH_MXC) += imx8qm-mek.dtb imx8qm-mek-ov5640.dtb \
 			  imx8qm-mek-enet2-tja1100.dtb imx8qm-mek-rpmsg.dtb \
 			  imx8qm-mek-hdmi.dtb imx8qm-mek-dsp.dtb \

@@ -14,6 +14,7 @@
 #include <linux/highmem.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/scatterlist.h>
@@ -1165,9 +1166,11 @@ static inline void sdhci_auto_cmd_select(struct sdhci_host *host,
 	/*
 	 * In case of Version 4.10 or later, use of 'Auto CMD Auto
 	 * Select' is recommended rather than use of 'Auto CMD12
-	 * Enable' or 'Auto CMD23 Enable'.
+	 * Enable' or 'Auto CMD23 Enable'. We require Version 4 Mode
+	 * here because some controllers (e.g sdhci-of-dwmshc) expect it.
 	 */
-	if (host->version >= SDHCI_SPEC_410 && (use_cmd12 || use_cmd23)) {
+	if (host->version >= SDHCI_SPEC_410 && host->v4_mode &&
+	    (use_cmd12 || use_cmd23)) {
 		*mode |= SDHCI_TRNS_AUTO_SEL;
 
 		ctrl2 = sdhci_readw(host, SDHCI_HOST_CONTROL2);
@@ -2187,6 +2190,9 @@ int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
 
 	ctrl = sdhci_readw(host, SDHCI_HOST_CONTROL2);
 
+	if (host->quirks2 & SDHCI_QUIRK2_VQMMC_1_8_V)
+		ios->signal_voltage = MMC_SIGNAL_VOLTAGE_180;
+
 	switch (ios->signal_voltage) {
 	case MMC_SIGNAL_VOLTAGE_330:
 		if (!(host->flags & SDHCI_SIGNALING_330))
@@ -2218,6 +2224,7 @@ int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
 	case MMC_SIGNAL_VOLTAGE_180:
 		if (!(host->flags & SDHCI_SIGNALING_180))
 			return -EINVAL;
+		msleep(2);	/* Helps switching fail in a recoverable way */
 		if (!IS_ERR(mmc->supply.vqmmc)) {
 			ret = mmc_regulator_set_vqmmc(mmc, ios);
 			if (ret) {
@@ -2774,8 +2781,9 @@ static void sdhci_timeout_timer(struct timer_list *t)
 	spin_lock_irqsave(&host->lock, flags);
 
 	if (host->cmd && !sdhci_data_line_cmd(host->cmd)) {
-		pr_err("%s: Timeout waiting for hardware cmd interrupt.\n",
-		       mmc_hostname(host->mmc));
+		pr_err("%s: Timeout waiting for hardware interrupt. retries left=%d opcode=%x\n",
+				mmc_hostname(host->mmc), host->cmd ? host->cmd->retries : 0,
+				host->cmd ? host->cmd->opcode : 0);
 		sdhci_dumpregs(host);
 
 		host->cmd->error = -ETIMEDOUT;
@@ -3091,7 +3099,7 @@ static irqreturn_t sdhci_irq(int irq, void *dev_id)
 
 		/* Clear selected interrupts. */
 		mask = intmask & (SDHCI_INT_CMD_MASK | SDHCI_INT_DATA_MASK |
-				  SDHCI_INT_BUS_POWER);
+				  SDHCI_INT_BUS_POWER | SDHCI_INT_RETUNE);
 		sdhci_writel(host, mask, SDHCI_INT_STATUS);
 
 		if (intmask & (SDHCI_INT_CARD_INSERT | SDHCI_INT_CARD_REMOVE)) {
@@ -4003,7 +4011,8 @@ int sdhci_setup_host(struct sdhci_host *host)
 	if (host->caps & SDHCI_CAN_DO_HISPD)
 		mmc->caps |= MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED;
 
-	if (!IS_ERR(mmc->supply.vqmmc)) {
+	if (!IS_ERR(mmc->supply.vqmmc) &&
+		!(host->quirks2 & SDHCI_QUIRK2_VQMMC_1_8_V)) {
 		ret = regulator_enable(mmc->supply.vqmmc);
 
 		/* If vqmmc provides no 1.8V signalling, then there's no UHS */
@@ -4047,12 +4056,19 @@ int sdhci_setup_host(struct sdhci_host *host)
 
 	/* SDR104 supports also implies SDR50 support */
 	if (host->caps1 & SDHCI_SUPPORT_SDR104) {
+		struct device_node *np;
+
 		mmc->caps |= MMC_CAP_UHS_SDR104 | MMC_CAP_UHS_SDR50;
-		/* SD3.0: SDR104 is supported so (for eMMC) the caps2
-		 * field can be promoted to support HS200.
-		 */
-		if (!(host->quirks2 & SDHCI_QUIRK2_BROKEN_HS200))
-			mmc->caps2 |= MMC_CAP2_HS200;
+		np = mmc->parent->of_node;
+		if (of_property_read_bool(np, "no-sd-uhs-sdr104")) {
+			mmc->caps &= ~MMC_CAP_UHS_SDR104;
+		} else {
+			/* SD3.0: SDR104 is supported so (for eMMC) the caps2
+			 * field can be promoted to support HS200.
+			 */
+			if (!(host->quirks2 & SDHCI_QUIRK2_BROKEN_HS200))
+				mmc->caps2 |= MMC_CAP2_HS200;
+		}
 	} else if (host->caps1 & SDHCI_SUPPORT_SDR50) {
 		mmc->caps |= MMC_CAP_UHS_SDR50;
 	}
@@ -4220,7 +4236,9 @@ int sdhci_setup_host(struct sdhci_host *host)
 	 */
 	if (host->flags & SDHCI_USE_ADMA) {
 		if (host->quirks & SDHCI_QUIRK_BROKEN_ADMA_ZEROLEN_DESC) {
-			mmc->max_seg_size = 65535;
+#define MAX_ADMA_SEGMENT (SZ_64K - 64)
+			mmc->max_seg_size = MAX_ADMA_SEGMENT;
+
 			/*
 			 * send the ADMA limitation to IOMMU. In default,
 			 * the max segment size of IOMMU is 64KB, this exceed
@@ -4228,7 +4246,7 @@ int sdhci_setup_host(struct sdhci_host *host)
 			 */
 			dev->dma_parms = devm_kzalloc(dev,
 			                sizeof(*dev->dma_parms), GFP_KERNEL);
-			dma_set_max_seg_size(dev, SZ_64K - 1);
+			dma_set_max_seg_size(dev, MAX_ADMA_SEGMENT);
 		} else {
 			mmc->max_seg_size = 65536;
 		}

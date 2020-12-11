@@ -251,6 +251,8 @@ struct imx_i2c_struct {
 	unsigned int		ifdr; /* IMX_I2C_IFDR */
 	unsigned int		cur_clk;
 	unsigned int		bitrate;
+	u32			inter_byte_delay;
+	u32			stop_delay;
 	const struct imx_i2c_hwdata	*hwdata;
 	struct i2c_bus_recovery_info rinfo;
 
@@ -677,6 +679,9 @@ static void i2c_imx_stop(struct imx_i2c_struct *i2c_imx)
 	unsigned int temp = 0;
 
 	if (!i2c_imx->stopped) {
+		if (i2c_imx->stop_delay)
+			udelay(i2c_imx->stop_delay);
+
 		/* Stop I2C transaction */
 		dev_dbg(&i2c_imx->adapter.dev, "<%s>\n", __func__);
 		temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
@@ -889,6 +894,8 @@ static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs)
 		dev_dbg(&i2c_imx->adapter.dev,
 			"<%s> write byte: B%d=0x%X\n",
 			__func__, i, msgs->buf[i]);
+		if (i2c_imx->inter_byte_delay)
+			udelay(i2c_imx->inter_byte_delay);
 		imx_i2c_write_reg(msgs->buf[i], i2c_imx, IMX_I2C_I2DR);
 		result = i2c_imx_trx_complete(i2c_imx);
 		if (result)
@@ -1514,6 +1521,13 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	i2c_imx->base			= base;
 	ACPI_COMPANION_SET(&i2c_imx->adapter.dev, ACPI_COMPANION(&pdev->dev));
 
+	of_property_read_u32(pdev->dev.of_node, "inter-byte-delay",
+			&i2c_imx->inter_byte_delay);
+	of_property_read_u32(pdev->dev.of_node, "stop-delay",
+			&i2c_imx->stop_delay);
+	dev_info(&pdev->dev, "stop-delay=%d, inter-byte-delay=%d\n",
+			i2c_imx->stop_delay, i2c_imx->inter_byte_delay);
+
 	/* Get I2C clock */
 	i2c_imx->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(i2c_imx->clk)) {
@@ -1526,15 +1540,6 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "can't enable I2C clock, ret=%d\n", ret);
 		return ret;
-	}
-
-	/* Request IRQ */
-	ret = devm_request_irq(&pdev->dev, irq, i2c_imx_isr,
-				IRQF_SHARED | IRQF_NO_SUSPEND,
-				pdev->name, i2c_imx);
-	if (ret) {
-		dev_err(&pdev->dev, "can't claim irq %d\n", irq);
-		goto clk_disable;
 	}
 
 	/* Init queue */
@@ -1554,6 +1559,14 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0)
 		goto rpm_disable;
+
+	/* Request IRQ */
+	ret = request_threaded_irq(irq, i2c_imx_isr, NULL, IRQF_SHARED,
+				   pdev->name, i2c_imx);
+	if (ret) {
+		dev_err(&pdev->dev, "can't claim irq %d\n", irq);
+		goto rpm_disable;
+	}
 
 	/* Set up clock divider */
 	i2c_imx->bitrate = IMX_I2C_BIT_RATE;
@@ -1614,13 +1627,12 @@ i2c_adapter_remove:
 	i2c_del_adapter(&i2c_imx->adapter);
 clk_notifier_unregister:
 	clk_notifier_unregister(i2c_imx->clk, &i2c_imx->clk_change_nb);
+	free_irq(irq, i2c_imx);
 rpm_disable:
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
-
-clk_disable:
 	clk_disable_unprepare(i2c_imx->clk);
 	return ret;
 }
@@ -1628,7 +1640,7 @@ clk_disable:
 static int i2c_imx_remove(struct platform_device *pdev)
 {
 	struct imx_i2c_struct *i2c_imx = platform_get_drvdata(pdev);
-	int ret;
+	int irq, ret;
 
 	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0)
@@ -1648,6 +1660,9 @@ static int i2c_imx_remove(struct platform_device *pdev)
 	imx_i2c_write_reg(0, i2c_imx, IMX_I2C_I2SR);
 
 	clk_notifier_unregister(i2c_imx->clk, &i2c_imx->clk_change_nb);
+	irq = platform_get_irq(pdev, 0);
+	if (irq >= 0)
+		free_irq(irq, i2c_imx);
 	clk_disable_unprepare(i2c_imx->clk);
 
 	pm_runtime_put_noidle(&pdev->dev);

@@ -198,7 +198,7 @@
  * Mode/Count of data node descriptors - IPCv2
  */
 struct sdma_mode_count {
-#define SDMA_BD_MAX_CNT	0xffff
+#define SDMA_BD_MAX_CNT	0xfffc /* align with 4 bytes */
 	u32 count   : 16; /* size of the buffer pointed by this BD */
 	u32 status  :  8; /* E,R,I,C,W,D status bits stored here */
 	u32 command :  8; /* command mostly used for channel 0 */
@@ -634,6 +634,14 @@ static struct sdma_driver_data sdma_imx7d = {
 	.script_addrs = &sdma_script_imx7d,
 };
 
+static struct sdma_driver_data sdma_imx8mn = {
+	.chnenbl0 = SDMA_CHNENBL0_IMX35,
+	.num_events = 48,
+	.script_addrs = &sdma_script_imx7d,
+	.check_ratio = 1,
+	.ecspi_fixed = false,
+};
+
 static struct sdma_driver_data sdma_imx8mq = {
 	.chnenbl0 = SDMA_CHNENBL0_IMX35,
 	.num_events = 48,
@@ -680,6 +688,9 @@ static const struct platform_device_id sdma_devtypes[] = {
 		.name = "imx6ul-sdma",
 		.driver_data = (unsigned long)&sdma_imx6ul,
 	}, {
+		.name = "imx8mn-sdma",
+		.driver_data = (unsigned long)&sdma_imx8mn,
+	}, {
 		.name = "imx8mq-sdma",
 		.driver_data = (unsigned long)&sdma_imx8mq,
 	}, {
@@ -701,6 +712,7 @@ static const struct of_device_id sdma_dt_ids[] = {
 	{ .compatible = "fsl,imx6sx-sdma", .data = &sdma_imx6sx, },
 	{ .compatible = "fsl,imx7d-sdma", .data = &sdma_imx7d, },
 	{ .compatible = "fsl,imx6ul-sdma", .data = &sdma_imx6ul, },
+	{ .compatible = "fsl,imx8mn-sdma", .data = &sdma_imx8mn, },
 	{ .compatible = "fsl,imx8mq-sdma", .data = &sdma_imx8mq, },
 	{ .compatible = "fsl,imx8mp-sdma", .data = &sdma_imx8mp, },
 	{ /* sentinel */ }
@@ -1438,7 +1450,7 @@ static int sdma_alloc_bd(struct sdma_desc *desc)
 	int ret = 0;
 
 	if (sdma->iram_pool)
-		desc->bd = gen_pool_dma_alloc(sdma->iram_pool, PAGE_SIZE,
+		desc->bd = gen_pool_dma_alloc(sdma->iram_pool, bd_size,
 					      &desc->bd_phys);
 	else
 		desc->bd = dma_alloc_coherent(sdma->dev, bd_size,
@@ -1456,12 +1468,14 @@ static void sdma_free_bd(struct sdma_desc *desc)
 	u32 bd_size = desc->num_bd * sizeof(struct sdma_buffer_descriptor);
 	struct sdma_engine *sdma = desc->sdmac->sdma;
 
-	if (sdma->iram_pool)
-		gen_pool_free(sdma->iram_pool, (unsigned long)desc->bd,
-			      PAGE_SIZE);
-	else
-		dma_free_coherent(desc->sdmac->sdma->dev, bd_size, desc->bd,
-				  desc->bd_phys);
+	if (desc->bd) {
+		if (sdma->iram_pool)
+			gen_pool_free(sdma->iram_pool, (unsigned long)desc->bd,
+				      bd_size);
+		else
+			dma_free_coherent(sdma->dev, bd_size, desc->bd,
+					  desc->bd_phys);
+	}
 }
 
 static void sdma_desc_free(struct virt_dma_desc *vd)

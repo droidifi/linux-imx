@@ -154,6 +154,7 @@ MODULE_PARM_DESC(debug, "Debug level (0-2)");
 #define MIPI_CSIS_ISPCFG_DOUBLE_CMPNT        (1 << 12)
 #define MIPI_CSIS_ISPCFG_ALIGN_32BIT         (1 << 11)
 #define MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT   (0x1e << 2)
+#define MIPI_CSIS_ISPCFG_FMT_RGB888		(0x24 << 2)
 #define MIPI_CSIS_ISPCFG_FMT_RAW8		(0x2a << 2)
 #define MIPI_CSIS_ISPCFG_FMT_RAW10		(0x2b << 2)
 #define MIPI_CSIS_ISPCFG_FMT_RAW12		(0x2c << 2)
@@ -315,12 +316,24 @@ static const struct csis_pix_format mipi_csis_formats[] = {
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
 		.data_alignment = 16,
 	}, {
+		.code = MEDIA_BUS_FMT_UYVY8_2X8,
+		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
+		.data_alignment = 16,
+	}, {
+		.code = MEDIA_BUS_FMT_UYVY8_1X16,
+		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
+		.data_alignment = 16,
+	}, {
 		.code = MEDIA_BUS_FMT_VYUY8_2X8,
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
 		.data_alignment = 16,
 	}, {
 		.code = MEDIA_BUS_FMT_SBGGR8_1X8,
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_RAW8,
+		.data_alignment = 8,
+	}, {
+		.code = MEDIA_BUS_FMT_RGB888_1X24,
+		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_RGB888,
 		.data_alignment = 8,
 	}
 };
@@ -661,16 +674,42 @@ static void mipi_csis_log_counters(struct csi_state *state, bool non_errors)
 	spin_unlock_irqrestore(&state->slock, flags);
 }
 
+static int mipi_csis_s_mbus_config(struct v4l2_subdev *mipi_sd,
+				const struct v4l2_mbus_config *cfg)
+{
+	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
+
+	if (cfg->flags & V4L2_MBUS_CSI2_4_LANE)
+		state->num_lanes = 4;
+	else if (cfg->flags & V4L2_MBUS_CSI2_3_LANE)
+		state->num_lanes = 3;
+	else if (cfg->flags & V4L2_MBUS_CSI2_2_LANE)
+		state->num_lanes = 2;
+	else if (cfg->flags & V4L2_MBUS_CSI2_1_LANE)
+		state->num_lanes = 1;
+	else
+		return -EINVAL;
+	v4l2_dbg(1, debug, mipi_sd, "%s: lanes=%d\n",
+		__func__, state->num_lanes);
+	return 0;
+}
+
 /*
  * V4L2 subdev operations
  */
 static int mipi_csis_s_power(struct v4l2_subdev *mipi_sd, int on)
 {
+	struct v4l2_mbus_config cfg;
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct device *dev = &state->pdev->dev;
 
 	v4l2_subdev_call(state->sensor_sd, core, s_power, on);
-
+	if (on) {
+		cfg.flags = 0;
+		v4l2_subdev_call(state->sensor_sd, video, g_mbus_config, &cfg);
+		if (cfg.flags)
+			mipi_csis_s_mbus_config(mipi_sd, &cfg);
+	}
 	if (on)
 		return pm_runtime_get_sync(dev);
 
@@ -731,7 +770,7 @@ static int mipi_csis_enum_mbus_code(struct v4l2_subdev *mipi_sd,
 
 	csis_fmt = find_csis_format(code->code);
 	if (csis_fmt == NULL) {
-		dev_err(state->dev, "format not match\n");
+		dev_err(state->dev, "format(0x%x) not match\n", code->code);
 		return -EINVAL;
 	}
 
@@ -861,7 +900,7 @@ static struct v4l2_subdev_core_ops mipi_csis_core_ops = {
 static struct v4l2_subdev_video_ops mipi_csis_video_ops = {
 	.s_rx_buffer = mipi_csis_s_rx_buffer,
 	.s_stream = mipi_csis_s_stream,
-
+	.s_mbus_config = mipi_csis_s_mbus_config,
 	.s_parm = mipi_csis_s_parm,
 	.g_parm = mipi_csis_g_parm,
 };
@@ -942,6 +981,19 @@ static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 	return 0;
 }
 
+static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
+{
+	struct csi_state *state = notifier_to_mipi_dev(notifier);
+	struct v4l2_device *v4l2_dev = &state->v4l2_dev;
+	int ret;
+
+	ret = v4l2_device_register_subdev_nodes(v4l2_dev);
+	if (ret)
+		v4l2_info(v4l2_dev, "Failed to register subdev nodes\n");
+
+	return ret;
+}
+
 static int mipi_csis_parse_dt(struct platform_device *pdev,
 			    struct csi_state *state)
 {
@@ -982,6 +1034,7 @@ static const struct of_device_id mipi_csis_of_match[];
 
 static const struct v4l2_async_notifier_operations mxc_mipi_csi_subdev_ops = {
 	.bound = subdev_notifier_bound,
+	.complete = subdev_notifier_complete,
 };
 
 /* register parent dev */

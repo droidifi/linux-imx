@@ -12,11 +12,11 @@
 #include <linux/completion.h>
 #include <linux/interrupt.h>
 #include <linux/scatterlist.h>
+#include <linux/mmc/host.h>
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/core.h>
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/card.h>
-#include <linux/mmc/host.h>
 #include <linux/pm_runtime.h>
 #include <linux/suspend.h>
 #include <linux/errno.h>
@@ -981,6 +981,7 @@ static const struct sdio_device_id brcmf_sdmmc_ids[] = {
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_43455),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_4354),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_4356),
+	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_5332),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_CYPRESS_4373),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_CYPRESS_43012),
 	{ /* end: all zeroes */ }

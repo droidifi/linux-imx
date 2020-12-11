@@ -44,6 +44,7 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/extcon.h>
+#include <linux/extcon-provider.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
@@ -534,63 +535,123 @@ int hw_device_reset(struct ci_hdrc *ci)
 	return 0;
 }
 
+int hw_vbus_enable(struct ci_hdrc *ci, int enable)
+{
+	struct regulator *reg_vbus = ci->platdata->reg_vbus;
+	int ret;
+	int retry = 0;
+
+	if (PTR_ERR(reg_vbus) == -EPROBE_DEFER) {
+		if (!enable)
+			return 0;
+
+		while (1) {
+			reg_vbus = devm_regulator_get_optional(ci->platdata->dev, "vbus");
+			if (IS_ERR(reg_vbus)) {
+				if (PTR_ERR(reg_vbus) == -EPROBE_DEFER) {
+					if (retry == 20) {
+						dev_warn(ci->platdata->dev, "regulator EPROBE_DEFER\n");
+						return -EPROBE_DEFER;
+					}
+					msleep(500);
+					retry++;
+					continue;
+				}
+				dev_err(ci->platdata->dev, "Getting regulator error: %ld\n",
+							PTR_ERR(reg_vbus));
+				ci->platdata->reg_vbus = NULL;
+				return PTR_ERR(reg_vbus);
+			}
+			break;
+		}
+		ci->platdata->reg_vbus = reg_vbus;
+	}
+	if (reg_vbus) {
+		if (enable)
+			ret = regulator_enable(reg_vbus);
+		else
+			ret = regulator_disable(reg_vbus);
+		if (ret) {
+			dev_err(ci->dev, "Failed to %s vbus regulator, ret=%d\n",
+				enable ? "enable" : "disable", ret);
+			return ret;
+		}
+	}
+	return 0;
+}
+
 static irqreturn_t ci_irq(int irq, void *data)
 {
 	struct ci_hdrc *ci = data;
 	irqreturn_t ret = IRQ_NONE;
 	u32 otgsc = 0;
 
+	spin_lock(&ci->lock);
 	if (ci->in_lpm) {
 		/*
 		 * If we already have a wakeup irq pending there,
 		 * let's just return to wait resume finished firstly.
 		 */
-		if (ci->wakeup_int)
+		if (ci->wakeup_int) {
+			spin_unlock(&ci->lock);
 			return IRQ_HANDLED;
+		}
 
 		disable_irq_nosync(irq);
 		ci->wakeup_int = true;
 		pm_runtime_get(ci->dev);
+		spin_unlock(&ci->lock);
 		return IRQ_HANDLED;
 	}
 
 	if (ci->is_otg) {
+		int do_queue = 0;
+
 		otgsc = hw_read_otgsc(ci, ~0);
 		if (ci_otg_is_fsm_mode(ci)) {
 			ret = ci_otg_fsm_irq(ci);
-			if (ret == IRQ_HANDLED)
+			if (ret == IRQ_HANDLED) {
+				spin_unlock(&ci->lock);
 				return ret;
+			}
 		}
-	}
 
-	/*
-	 * Handle id change interrupt, it indicates device/host function
-	 * switch.
-	 */
-	if (ci->is_otg && (otgsc & OTGSC_IDIE) && (otgsc & OTGSC_IDIS)) {
-		ci->id_event = true;
-		/* Clear ID change irq status */
-		hw_write_otgsc(ci, OTGSC_IDIS, OTGSC_IDIS);
-		ci_otg_queue_work(ci);
-		return IRQ_HANDLED;
-	}
+		/*
+		 * Handle id change interrupt, it indicates device/host function
+		 * switch.
+		 */
+		if (!(otgsc & OTGSC_IDIE)) {
+			otgsc &= ~OTGSC_IDIS;
+		} else if (otgsc & OTGSC_IDIS) {
+			ci->id_event = true;
+			do_queue = 1;
+		}
 
-	/*
-	 * Handle vbus change interrupt, it indicates device connection
-	 * and disconnection events.
-	 */
-	if (ci->is_otg && (otgsc & OTGSC_BSVIE) && (otgsc & OTGSC_BSVIS)) {
-		ci->b_sess_valid_event = true;
-		/* Clear BSV irq */
-		hw_write_otgsc(ci, OTGSC_BSVIS, OTGSC_BSVIS);
-		ci_otg_queue_work(ci);
-		return IRQ_HANDLED;
+		/*
+		 * Handle vbus change interrupt, it indicates device connection
+		 * and disconnection events.
+		 */
+		if (!(otgsc & OTGSC_BSVIE)) {
+			otgsc &= ~OTGSC_BSVIS;
+		} else if (otgsc & OTGSC_BSVIS) {
+			ci->b_sess_valid_event = true;
+			do_queue = 1;
+		}
+
+		if (do_queue) {
+			hw_write_otgsc(ci, OTGSC_INT_STATUS_BITS,
+				otgsc & (OTGSC_IDIS | OTGSC_BSVIS));
+			ci_otg_queue_work(ci);
+			spin_unlock(&ci->lock);
+			return IRQ_HANDLED;
+		}
 	}
 
 	/* Handle device/host interrupt */
 	if (ci->role != CI_ROLE_END)
 		ret = ci_role(ci)->irq(ci);
 
+	spin_unlock(&ci->lock);
 	return ret;
 }
 
@@ -692,9 +753,8 @@ static int ci_get_platdata(struct device *dev,
 
 	if (platdata->dr_mode != USB_DR_MODE_PERIPHERAL) {
 		/* Get the vbus regulator */
-		platdata->reg_vbus = devm_regulator_get(dev, "vbus");
+		platdata->reg_vbus = devm_regulator_get_optional(dev, "vbus");
 		if (PTR_ERR(platdata->reg_vbus) == -EPROBE_DEFER) {
-			return -EPROBE_DEFER;
 		} else if (PTR_ERR(platdata->reg_vbus) == -ENODEV) {
 			/* no vbus regulator is needed */
 			platdata->reg_vbus = NULL;
@@ -861,12 +921,17 @@ struct platform_device *ci_hdrc_add_device(struct device *dev,
 {
 	struct platform_device *pdev;
 	int id, ret;
+	u32 start;
 
+	platdata->dev = dev;
 	ret = ci_get_platdata(dev, platdata);
 	if (ret)
 		return ERR_PTR(ret);
 
-	id = ida_simple_get(&ci_ida, 0, 0, GFP_KERNEL);
+	if (of_property_read_u32(dev->of_node, "id", &start) != 0)
+		start = 0;
+
+	id = ida_simple_get(&ci_ida, start, 0, GFP_KERNEL);
 	if (id < 0)
 		return ERR_PTR(id);
 
@@ -958,6 +1023,13 @@ static void ci_get_otg_capable(struct ci_hdrc *ci)
 							OTGSC_INT_STATUS_BITS);
 	}
 }
+
+static const unsigned int extcon_cables[] = {
+	EXTCON_USB_HOST,
+	EXTCON_CHG_USB_SDP,
+	EXTCON_USB,
+	EXTCON_NONE,
+};
 
 static ssize_t role_show(struct device *dev, struct device_attribute *attr,
 			  char *buf)
@@ -1164,6 +1236,23 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	}
 
 	ci_get_otg_capable(ci);
+	if (ci->is_otg) {
+		struct extcon_dev *extcon = ci->extcon;
+		if (!extcon) {
+			extcon = devm_extcon_dev_allocate(dev,
+					extcon_cables);
+			ci->extcon = extcon;
+		}
+		if (extcon) {
+			ret = extcon_dev_register(extcon);
+			if (ret) {
+				dev_err(&pdev->dev,
+					"could not register extcon device: %d\n",
+						ret);
+				return ret;
+			}
+		}
+	}
 
 	dr_mode = ci->platdata->dr_mode;
 	/* initialize role(s) before the interrupt is requested */
@@ -1230,6 +1319,10 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	}
 
 	ci->role = ci_get_role(ci);
+	if (ci->is_otg) {
+		extcon_set_state(ci->extcon, ci->role, 1);
+		extcon_set_state(ci->extcon, ci->role ^ 1, 0);
+	}
 	/* only update vbus status for peripheral */
 	if (ci->role == CI_ROLE_GADGET) {
 		/* Let DP pull down if it isn't currently */
@@ -1268,6 +1361,11 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 
 	device_set_wakeup_capable(&pdev->dev, true);
 	dbg_create_files(ci);
+
+	ci->wq_ready = 1;
+	if (ci->is_otg)
+		ci_otg_queue_work(ci);
+
 	/* Init workqueue for controller power lost handling */
 	ci->power_lost_wq = create_freezable_workqueue("ci_power_lost");
 	if (!ci->power_lost_wq) {
@@ -1283,6 +1381,8 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 remove_debug:
 	dbg_remove_files(ci);
 stop:
+	if (ci->is_otg)
+		extcon_dev_unregister(ci->extcon);
 	if (ci->role_switch)
 		usb_role_switch_unregister(ci->role_switch);
 deinit_otg:
@@ -1316,6 +1416,8 @@ static int ci_hdrc_remove(struct platform_device *pdev)
 	flush_workqueue(ci->power_lost_wq);
 	destroy_workqueue(ci->power_lost_wq);
 	dbg_remove_files(ci);
+	if (ci->is_otg)
+		extcon_dev_unregister(ci->extcon);
 	ci_role_destroy(ci);
 	ci_hdrc_enter_lpm(ci, true);
 	ci_usb_phy_exit(ci);
@@ -1361,6 +1463,29 @@ static void ci_controller_suspend(struct ci_hdrc *ci)
 	enable_irq(ci->irq);
 }
 
+/*
+ * Handle the wakeup interrupt triggered by extcon connector
+ * We need to call ci_irq again for extcon since the first
+ * interrupt (wakeup int) only let the controller be out of
+ * low power mode, but not handle any interrupts.
+ */
+static void ci_extcon_wakeup_int(struct ci_hdrc *ci)
+{
+	struct ci_hdrc_cable *cable_id, *cable_vbus;
+	u32 otgsc = hw_read_otgsc(ci, ~0);
+
+	cable_id = &ci->platdata->id_extcon;
+	cable_vbus = &ci->platdata->vbus_extcon;
+
+	if (!IS_ERR(cable_id->edev) && ci->is_otg &&
+		(otgsc & OTGSC_IDIE) && (otgsc & OTGSC_IDIS))
+		ci_irq(ci->irq, ci);
+
+	if (!IS_ERR(cable_vbus->edev) && ci->is_otg &&
+		(otgsc & OTGSC_BSVIE) && (otgsc & OTGSC_BSVIS))
+		ci_irq(ci->irq, ci);
+}
+
 static int ci_controller_resume(struct device *dev)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -1383,14 +1508,19 @@ static int ci_controller_resume(struct device *dev)
 		hw_wait_phy_stable();
 	}
 
+	spin_lock(&ci->lock);
 	ci->in_lpm = false;
 	if (ci->wakeup_int) {
 		ci->wakeup_int = false;
+		spin_unlock(&ci->lock);
 		pm_runtime_mark_last_busy(ci->dev);
 		pm_runtime_put_autosuspend(ci->dev);
 		enable_irq(ci->irq);
 		if (ci_otg_is_fsm_mode(ci))
 			ci_otg_fsm_wakeup_by_srp(ci);
+		ci_extcon_wakeup_int(ci);
+	} else {
+		spin_unlock(&ci->lock);
 	}
 
 	return 0;

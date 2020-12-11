@@ -1063,10 +1063,20 @@ int caam_sm_startup(struct device *ctrldev)
 	struct sm_page_descriptor *lpagedesc;
 	u32 page, pgstat, lpagect, detectedpage, smvid, smpart;
 	int ret = 0;
+	int i = 0;
 
 	struct device_node *np;
 	ctrlpriv = dev_get_drvdata(ctrldev);
 
+	while (!ctrlpriv) {
+		if (i >= 1000) {
+			dev_err(ctrldev, "%s: no private data\n", __func__);
+			return -EINVAL;
+		}
+		i++;
+		msleep(1);
+		ctrlpriv = dev_get_drvdata(ctrldev);
+	}
 	if (!ctrlpriv->sm_present)
 		return 0;
 
@@ -1150,6 +1160,11 @@ int caam_sm_startup(struct device *ctrldev)
 	}
 
 	jrpriv = dev_get_drvdata(smpriv->smringdev);
+	if (!jrpriv) {
+		kfree(smpriv);
+		dev_err(smdev, "dev_get_drvdata failed\n");
+		return -EINVAL;
+	}
 	lpagect = 0;
 	pgstat = 0;
 	lpagedesc = kzalloc(sizeof(struct sm_page_descriptor)

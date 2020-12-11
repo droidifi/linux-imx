@@ -673,6 +673,17 @@ config I2C_IMX
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-imx.
 
+config I2C_IMX_HS
+	tristate "IMX I2C-hs interface"
+	depends on ARCH_MXC
+	help
+	  Say Y here if you want to use the "high speed" IIC bus controller on
+	  Freescale i.MX51 processor. Support for this was dropped due
+	  to hardware bugs.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called i2c-imx-hs.
+
 config I2C_IMX_LPI2C
 	tristate "IMX Low Power I2C interface"
 	depends on ARCH_MXC || COMPILE_TEST
@@ -1168,6 +1179,7 @@ config I2C_RCAR
 	tristate "Renesas R-Car I2C Controller"
 	depends on ARCH_RENESAS || COMPILE_TEST
 	select I2C_SLAVE
+	select RESET_CONTROLLER if ARCH_RCAR_GEN3
 	help
 	  If you say yes to this option, support will be included for the
 	  R-Car I2C controller.
