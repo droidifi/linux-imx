@@ -9,7 +9,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  */
 
-#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/i2c.h>
@@ -26,7 +25,6 @@
 #include <linux/mfd/syscon.h>
 #include "../codecs/wm8960.h"
 #include "fsl_sai.h"
-#include "imx-audmux.h"
 
 struct imx_wm8960_data {
 	enum of_gpio_flags hp_active_low;
@@ -53,21 +51,6 @@ struct imx_wm8960_data {
 	struct snd_soc_jack imx_mic_jack;
 	struct snd_soc_jack_pin imx_mic_jack_pin;
 	struct snd_soc_jack_gpio imx_mic_jack_gpio;
-	struct gpio_desc *amp_mute;
-	struct gpio_desc *amp_standby;
-	unsigned amp_standby_enter_wait_ms;
-	unsigned amp_standby_exit_delay_ms;
-#define AMP_GAIN_CNT 2
-	struct gpio_desc *amp_gain[AMP_GAIN_CNT];
-	unsigned char amp_gain_seq[1 << AMP_GAIN_CNT];
-	char amp_gain_value;
-	char amp_mute_value;
-	char amp_disabled;
-	char hp_det_status;
-	char amp_standby_state;
-	char amp_mute_on_hp_detect;
-	char amp_standby_set_pending;
-	char amp_mute_clear_pending;
 };
 
 static int hp_jack_status_check(void *data)
@@ -118,93 +101,11 @@ static int mic_jack_status_check(void *data)
 	return ret;
 }
 
-static int do_mute(struct gpio_desc *gd, int mute)
-{
-	if (!gd)
-		return 0;
-
-	gpiod_set_value(gd, mute);
-	return 0;
-}
-
-static int amp_mute(struct imx_wm8960_data *data, int mute)
-{
-	data->amp_disabled = data->amp_mute_value = mute;
-	if (!mute && data->amp_mute_on_hp_detect && data->hp_det_status)
-		mute = 1;
-	pr_debug("mute=%x\n", mute);
-	return do_mute(data->amp_mute, mute);
-}
-
-static int amp_stdby(struct imx_wm8960_data *data, int stdby)
-{
-	if (!data->amp_standby)
-		return 0;
-	if (stdby == data->amp_standby_state)
-		return 0;
-
-	if (stdby)
-		msleep(data->amp_standby_enter_wait_ms);
-	data->amp_standby_state = stdby;
-	pr_debug("stdby=%x\n", stdby);
-	gpiod_set_value(data->amp_standby, stdby);
-	if (!stdby)
-		msleep(data->amp_standby_exit_delay_ms);
-	return 0;
-}
-
-static int event_amp(struct snd_soc_dapm_widget *w,
-		    struct snd_kcontrol *k, int event)
-{
-	struct snd_soc_dapm_context *dapm = w->dapm;
-	struct snd_soc_card *card = dapm->card;
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-
-	if (event & SND_SOC_DAPM_POST_PMU) {
-		amp_stdby(data, 0);
-		data->amp_mute_clear_pending = 1;
-		return 0;
-	}
-	if (event & SND_SOC_DAPM_PRE_PMD) {
-		amp_mute(data, 1);
-		data->amp_standby_set_pending = 1;
-		return 0;
-	}
-	return 0;
-}
-
-static int event_amp_last(struct snd_soc_dapm_widget *w,
-		    struct snd_kcontrol *k, int event)
-{
-	struct snd_soc_dapm_context *dapm = w->dapm;
-	struct snd_soc_card *card = dapm->card;
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-
-	if ((event & SND_SOC_DAPM_POST_PMD) && data->amp_standby_set_pending) {
-		data->amp_standby_set_pending = 0;
-		return amp_stdby(data, 1);
-	}
-	if ((event & SND_SOC_DAPM_POST_PMU) && data->amp_mute_clear_pending) {
-		data->amp_mute_clear_pending = 0;
-		return amp_mute(data, 0);
-	}
-	return 0;
-}
-#define SND_SOC_DAPM_POST2(wname, wevent) \
-{	.id = snd_soc_dapm_post, .name = wname, .kcontrol_news = NULL, \
-	.num_kcontrols = 0, .reg = SND_SOC_NOPM, .event = wevent, \
-	.event_flags = SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD, \
-	.subseq = 1}
-
-
 static const struct snd_soc_dapm_widget imx_wm8960_dapm_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone Jack", NULL),
+	SND_SOC_DAPM_SPK("Ext Spk", NULL),
 	SND_SOC_DAPM_MIC("Mic Jack", NULL),
 	SND_SOC_DAPM_MIC("Main MIC", NULL),
-	SND_SOC_DAPM_SPK("Ext Spk", event_amp),
-	SND_SOC_DAPM_POST2("amp_post", event_amp_last),
 };
 
 static int imx_wm8960_jack_init(struct snd_soc_card *card,
@@ -370,21 +271,20 @@ static struct snd_pcm_hw_constraint_list imx_wm8960_rate_constraints = {
 static int imx_hifi_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-//	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_card *card = rtd->card;
 	struct imx_wm8960_data *data = snd_soc_card_get_drvdata(card);
 	bool tx = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
-//	struct fsl_sai *sai = dev_get_drvdata(cpu_dai->dev);
+	struct fsl_sai *sai = dev_get_drvdata(cpu_dai->dev);
 	int ret = 0;
 
 	data->is_stream_opened[tx] = true;
-#if 0
 	if (data->is_stream_opened[tx] != sai->is_stream_opened[tx] ||
 	    data->is_stream_opened[!tx] != sai->is_stream_opened[!tx]) {
 		data->is_stream_opened[tx] = false;
 		return -EBUSY;
 	}
-#endif
+
 	if (!data->is_codec_master) {
 		ret = snd_pcm_hw_constraint_list(substream->runtime, 0,
 				SNDRV_PCM_HW_PARAM_RATE, &imx_wm8960_rate_constraints);
@@ -412,52 +312,6 @@ static struct snd_soc_ops imx_hifi_ops = {
 	.shutdown  = imx_hifi_shutdown,
 };
 
-static void imx_wm8960_add_hp_jack(struct imx_wm8960_data *data)
-{
-	struct device *dev = &data->pdev->dev;
-	int ret;
-
-	if (data->is_headset_jack) {
-		data->imx_hp_jack_pin.mask |= SND_JACK_MICROPHONE;
-		data->imx_hp_jack_gpio.report |= SND_JACK_MICROPHONE;
-	}
-
-	data->imx_hp_jack_gpio.jack_status_check = hp_jack_status_check;
-	data->imx_hp_jack_gpio.data = data;
-	ret = imx_wm8960_jack_init(&data->card, &data->imx_hp_jack,
-				   &data->imx_hp_jack_pin, &data->imx_hp_jack_gpio);
-	if (ret) {
-		dev_warn(dev, "hp jack init failed (%d)\n", ret);
-		return;
-	}
-
-	ret = device_create_file(dev, &dev_attr_headphone);
-	if (ret)
-		dev_warn(dev, "create hp attr failed (%d)\n", ret);
-}
-
-
-static void imx_wm8960_add_mic_jack(struct imx_wm8960_data *data)
-{
-	struct device *dev = &data->pdev->dev;
-	int ret;
-
-	if (!data->is_headset_jack) {
-		data->imx_mic_jack_gpio.jack_status_check = mic_jack_status_check;
-		data->imx_mic_jack_gpio.data = data;
-		ret = imx_wm8960_jack_init(&data->card, &data->imx_mic_jack,
-					   &data->imx_mic_jack_pin, &data->imx_mic_jack_gpio);
-		if (ret) {
-			dev_warn(dev, "mic jack init failed (%d)\n", ret);
-			return;
-		}
-	}
-
-	ret = device_create_file(dev, &dev_attr_micphone);
-	if (ret)
-		dev_warn(dev, "create mic attr failed (%d)\n", ret);
-}
-
 static int imx_wm8960_late_probe(struct snd_soc_card *card)
 {
 	struct snd_soc_pcm_runtime *rtd = list_first_entry(
@@ -473,14 +327,6 @@ static int imx_wm8960_late_probe(struct snd_soc_card *card)
 
 	/* GPIO1 used as headphone detect output */
 	snd_soc_component_update_bits(codec_dai->component, WM8960_ADDCTL4, 7<<4, 3<<4);
-
-	if (gpio_is_valid(data->imx_hp_jack_gpio.gpio))
-		imx_wm8960_add_hp_jack(data);
-
-	if (gpio_is_valid(data->imx_mic_jack_gpio.gpio))
-		imx_wm8960_add_mic_jack(data);
-	if (data->hp_det[0] > 3)
-		return 0;
 
 	/* Enable headphone jack detect */
 	snd_soc_component_update_bits(codec_dai->component, WM8960_ADDCTL2, 1<<6, 1<<6);
@@ -563,11 +409,16 @@ static int of_parse_gpr(struct platform_device *pdev,
 	int ret;
 	struct of_phandle_args args;
 
-	/* Check if board is using gpr, discard if not the case */
+	if (of_device_is_compatible(pdev->dev.of_node,
+				    "fsl,imx7d-evk-wm8960"))
+		return 0;
+
 	ret = of_parse_phandle_with_fixed_args(pdev->dev.of_node,
 					       "gpr", 3, 0, &args);
-	if (ret)
-		return 0;
+	if (ret) {
+		dev_warn(&pdev->dev, "failed to get gpr property\n");
+		return ret;
+	}
 
 	data->gpr = syscon_node_to_regmap(args.np);
 	if (IS_ERR(data->gpr)) {
@@ -582,136 +433,15 @@ static int of_parse_gpr(struct platform_device *pdev,
 	return 0;
 }
 
-static int setup_audmux(struct device *dev)
-{
-	struct device_node *np = dev->of_node;
-	int int_port, ext_port;
-	int ret;
-
-	ret = of_property_read_u32(np, "mux-int-port", &int_port);
-	if (ret) {
-		dev_err(dev, "mux-int-port missing or invalid\n");
-		return ret;
-	}
-	ret = of_property_read_u32(np, "mux-ext-port", &ext_port);
-	if (ret) {
-		dev_err(dev, "mux-ext-port missing or invalid\n");
-		return ret;
-	}
-
-	/*
-	 * The port numbering in the hardware manual starts at 1, while
-	 * the audmux API expects it starts at 0.
-	 */
-	int_port--;
-	ext_port--;
-	ret = imx_audmux_v2_configure_port(int_port,
-			IMX_AUDMUX_V2_PTCR_SYN |
-			IMX_AUDMUX_V2_PTCR_TFSEL(ext_port) |
-			IMX_AUDMUX_V2_PTCR_TCSEL(ext_port) |
-			IMX_AUDMUX_V2_PTCR_TFSDIR |
-			IMX_AUDMUX_V2_PTCR_TCLKDIR,
-			IMX_AUDMUX_V2_PDCR_RXDSEL(ext_port));
-	if (ret) {
-		dev_err(dev, "audmux internal port setup failed\n");
-		return ret;
-	}
-	imx_audmux_v2_configure_port(ext_port,
-			IMX_AUDMUX_V2_PTCR_SYN,
-			IMX_AUDMUX_V2_PDCR_RXDSEL(int_port));
-	if (ret)
-		dev_err(dev, "audmux external port setup failed\n");
-	return ret;
-}
-
-static int amp_gain_set(struct snd_kcontrol *kcontrol,
-			    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-	int value = ucontrol->value.integer.value[0];
-	int i;
-
-	if (value >= (1 << AMP_GAIN_CNT))
-		return -EINVAL;
-
-	data->amp_gain_value = value;
-	value = data->amp_gain_seq[value];
-
-	for (i = 0; i < AMP_GAIN_CNT; i++) {
-		struct gpio_desc *gd = data->amp_gain[i];
-
-		if (!gd)
-			break;
-		gpiod_set_value(gd, value & 1);
-		value >>= 1;
-	}
-	return 0;
-}
-
-static int amp_gain_get(struct snd_kcontrol *kcontrol,
-			    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-
-	ucontrol->value.integer.value[0] = data->amp_gain_value;
-	return 0;
-}
-
-static int amp_enable_set(struct snd_kcontrol *kcontrol,
-			    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-	int value = ucontrol->value.integer.value[0];
-
-	if (value > 1)
-		return -EINVAL;
-	value = (value ^ 1 ) | data->amp_disabled;
-	data->amp_mute_value = value;
-	if (data->amp_mute)
-		gpiod_set_value(data->amp_mute, value);
-	return 0;
-}
-
-static int amp_enable_get(struct snd_kcontrol *kcontrol,
-			    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
-	struct imx_wm8960_data *data = container_of(card,
-			struct imx_wm8960_data, card);
-
-	ucontrol->value.integer.value[0] = data->amp_mute_value ^ 1;
-	return 0;
-}
-
-static const struct snd_kcontrol_new more_controls[] = {
-	SOC_SINGLE_EXT("amp_gain", 0, 0, (1 << AMP_GAIN_CNT) - 1, 0,
-		       amp_gain_get, amp_gain_set),
-	SOC_SINGLE_EXT("amp_enable", 0, 0, 1, 0,
-		       amp_enable_get, amp_enable_set),
-};
-
 static int imx_wm8960_probe(struct platform_device *pdev)
 {
-	struct device_node *np = pdev->dev.of_node;
 	struct device_node *cpu_np = NULL, *codec_np = NULL;
 	struct platform_device *cpu_pdev;
 	struct imx_wm8960_data *data;
 	struct platform_device *asrc_pdev = NULL;
 	struct device_node *asrc_np;
-	struct gpio_desc *gd = NULL;
-	unsigned amp_standby_enter_wait_ms = 0;
-	unsigned amp_standby_exit_delay_ms = 0;
-	const struct snd_kcontrol_new *kcontrols = more_controls;
-	int kcontrols_cnt = ARRAY_SIZE(more_controls);
 	u32 width;
 	int ret;
-	int i;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data) {
@@ -739,27 +469,21 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 	if (of_property_read_bool(pdev->dev.of_node, "codec-rpmsg"))
 		data->is_codec_rpmsg = true;
 
-	cpu_np = of_parse_phandle(np, "cpu-dai", 0);
+	cpu_np = of_parse_phandle(pdev->dev.of_node, "cpu-dai", 0);
 	if (!cpu_np) {
 		dev_err(&pdev->dev, "cpu dai phandle missing or invalid\n");
 		ret = -EINVAL;
 		goto fail;
 	}
 
-	if (strstr(cpu_np->name, "ssi")) {
-		ret = setup_audmux(&pdev->dev);
-		if (ret)
-			return ret;
-	}
-
 	cpu_pdev = of_find_device_by_node(cpu_np);
 	if (!cpu_pdev) {
-		dev_err(&pdev->dev, "failed to find SSI/SAI platform device\n");
-		ret = -EPROBE_DEFER;
+		dev_err(&pdev->dev, "failed to find SAI platform device\n");
+		ret = -EINVAL;
 		goto fail;
 	}
 
-	codec_np = of_parse_phandle(np, "audio-codec", 0);
+	codec_np = of_parse_phandle(pdev->dev.of_node, "audio-codec", 0);
 	if (!codec_np) {
 		dev_err(&pdev->dev, "phandle missing or invalid\n");
 		ret = -EINVAL;
@@ -772,7 +496,7 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 		codec_dev = of_find_device_by_node(codec_np);
 		if (!codec_dev || !codec_dev->dev.driver) {
 			dev_err(&pdev->dev, "failed to find codec platform device\n");
-			ret = -EPROBE_DEFER;
+			ret = -EINVAL;
 			goto fail;
 		}
 
@@ -800,42 +524,7 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 		}
 	}
 
-	gd = devm_gpiod_get_index_optional(&pdev->dev, "amp-mute", 0, GPIOD_OUT_HIGH);
-	if (IS_ERR(gd)) {
-		ret = PTR_ERR(gd);
-		goto fail;
-	}
-	data->amp_mute = gd;
-	data->amp_mute_value = 1;
-	data->amp_standby_state = 1;
-	gd = devm_gpiod_get_index_optional(&pdev->dev, "amp-standby", 0, GPIOD_OUT_HIGH);
-	if (IS_ERR(gd)) {
-		ret = PTR_ERR(gd);
-		goto fail;
-	}
-	data->amp_standby = gd;
-
-	of_property_read_u32(np, "amp-standby-enter-wait-ms", &amp_standby_enter_wait_ms);
-	of_property_read_u32(np, "amp-standby-exit-delay-ms", &amp_standby_exit_delay_ms);
-	data->amp_standby_enter_wait_ms = amp_standby_enter_wait_ms;
-	data->amp_standby_exit_delay_ms = amp_standby_exit_delay_ms;
-	for (i = 0; i < (1 << AMP_GAIN_CNT); i++)
-		data->amp_gain_seq[i] = i;
-
-	for (i = 0; i < AMP_GAIN_CNT; i++) {
-		gd = devm_gpiod_get_index_optional(&pdev->dev, "amp-gain", i, GPIOD_OUT_LOW);
-		if (IS_ERR(gd)) {
-			ret = PTR_ERR(gd);
-			goto fail;
-		}
-		data->amp_gain[i] = gd;
-		if (!gd)
-			break;
-	}
-	of_property_read_u8_array(np, "amp-gain-seq", data->amp_gain_seq,
-			(1 << i));
-
-	if (of_property_read_bool(np, "codec-master"))
+	if (of_property_read_bool(pdev->dev.of_node, "codec-master"))
 		data->is_codec_master = true;
 
 	if (of_property_read_bool(pdev->dev.of_node, "capture-only"))
@@ -866,25 +555,14 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 	if (ret)
 		goto fail;
 
-	data->hp_det[0] = ~0;
-	of_property_read_u32_array(np, "hp-det", data->hp_det, 2);
+	of_property_read_u32_array(pdev->dev.of_node, "hp-det", data->hp_det, 2);
 
-	asrc_np = of_parse_phandle(np, "asrc-controller", 0);
+	asrc_np = of_parse_phandle(pdev->dev.of_node, "asrc-controller", 0);
 	if (asrc_np) {
 		asrc_pdev = of_find_device_by_node(asrc_np);
 		data->asrc_pdev = asrc_pdev;
 	}
 
-	if (!data->amp_gain[0]) {
-		kcontrols++;
-		kcontrols_cnt--;
-	}
-	if (!data->amp_mute)
-		kcontrols_cnt--;
-	if (kcontrols_cnt) {
-		data->card.controls	 = kcontrols;
-		data->card.num_controls  = kcontrols_cnt;
-	}
 	data->card.dai_link = imx_wm8960_dai;
 
 	if (data->is_codec_rpmsg) {
@@ -944,11 +622,18 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 
 	data->card.late_probe = imx_wm8960_late_probe;
 
-	data->imx_hp_jack_gpio.gpio = of_get_named_gpio_flags(np,
+	snd_soc_card_set_drvdata(&data->card, data);
+	ret = devm_snd_soc_register_card(&pdev->dev, &data->card);
+	if (ret) {
+		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
+		goto fail;
+	}
+
+	data->imx_hp_jack_gpio.gpio = of_get_named_gpio_flags(pdev->dev.of_node,
 							      "hp-det-gpios", 0,
 							      &data->hp_active_low);
 
-	data->imx_mic_jack_gpio.gpio = of_get_named_gpio_flags(np,
+	data->imx_mic_jack_gpio.gpio = of_get_named_gpio_flags(pdev->dev.of_node,
 							       "mic-det-gpios", 0,
 							       &data->mic_active_low);
 
@@ -957,11 +642,45 @@ static int imx_wm8960_probe(struct platform_device *pdev)
 	    data->imx_hp_jack_gpio.gpio == data->imx_mic_jack_gpio.gpio)
 		data->is_headset_jack = true;
 
-	platform_set_drvdata(pdev, &data->card);
-	snd_soc_card_set_drvdata(&data->card, data);
-	ret = devm_snd_soc_register_card(&pdev->dev, &data->card);
-	if (ret)
-		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
+	if (gpio_is_valid(data->imx_hp_jack_gpio.gpio)) {
+		if (data->is_headset_jack) {
+			data->imx_hp_jack_pin.mask |= SND_JACK_MICROPHONE;
+			data->imx_hp_jack_gpio.report |= SND_JACK_MICROPHONE;
+		}
+
+		data->imx_hp_jack_gpio.jack_status_check = hp_jack_status_check;
+		data->imx_hp_jack_gpio.data = data;
+		ret = imx_wm8960_jack_init(&data->card, &data->imx_hp_jack,
+					   &data->imx_hp_jack_pin, &data->imx_hp_jack_gpio);
+		if (ret) {
+			dev_warn(&pdev->dev, "hp jack init failed (%d)\n", ret);
+			goto out;
+		}
+
+		ret = device_create_file(&pdev->dev, &dev_attr_headphone);
+		if (ret)
+			dev_warn(&pdev->dev, "create hp attr failed (%d)\n", ret);
+	}
+
+	if (gpio_is_valid(data->imx_mic_jack_gpio.gpio)) {
+		if (!data->is_headset_jack) {
+			data->imx_mic_jack_gpio.jack_status_check = mic_jack_status_check;
+			data->imx_mic_jack_gpio.data = data;
+			ret = imx_wm8960_jack_init(&data->card, &data->imx_mic_jack,
+						   &data->imx_mic_jack_pin, &data->imx_mic_jack_gpio);
+			if (ret) {
+				dev_warn(&pdev->dev, "mic jack init failed (%d)\n", ret);
+				goto out;
+			}
+		}
+
+		ret = device_create_file(&pdev->dev, &dev_attr_micphone);
+		if (ret)
+			dev_warn(&pdev->dev, "create mic attr failed (%d)\n", ret);
+	}
+
+out:
+	ret = 0;
 fail:
 	if (cpu_np)
 		of_node_put(cpu_np);
@@ -973,13 +692,6 @@ fail:
 
 static int imx_wm8960_remove(struct platform_device *pdev)
 {
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
-	struct imx_wm8960_data *data = snd_soc_card_get_drvdata(card);
-
-	if (data->amp_mute)
-		gpiod_set_value(data->amp_mute, 1);
-	if (data->amp_standby)
-		gpiod_set_value(data->amp_standby, 1);
 	device_remove_file(&pdev->dev, &dev_attr_micphone);
 	device_remove_file(&pdev->dev, &dev_attr_headphone);
 

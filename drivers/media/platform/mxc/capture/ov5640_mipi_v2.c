@@ -504,57 +504,6 @@ static const struct ov5640_datafmt
 static int get_capturemode(const struct ov5640_mode_info *info, int cnt,
 		int width, int height)
 {
-	struct pinctrl *pinctrl;
-	struct device *dev = &client->dev;
-	int retval;
-	u8 chip_id_high, chip_id_low;
-	struct ov5640 *sensor;
-
-	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
-	if (!sensor)
-		return -ENOMEM;
-
-	/* ov5640 pinctrl */
-	pinctrl = devm_pinctrl_get_select_default(dev);
-	if (IS_ERR(pinctrl))
-		dev_warn(dev, "No pin available\n");
-
-	/* request power down pin */
-	sensor->pwn_gpio = of_get_named_gpio(dev->of_node, "pwn-gpios", 0);
-	if (!gpio_is_valid(sensor->pwn_gpio))
-		dev_warn(dev, "No sensor pwdn pin available");
-	else {
-		retval = devm_gpio_request_one(dev, sensor->pwn_gpio,
-				GPIOF_OUT_INIT_HIGH, "ov5640_mipi_pwdn");
-		if (retval < 0) {
-			dev_warn(dev, "Failed to set power pin\n");
-			dev_warn(dev, "retval=%d\n", retval);
-			return retval;
-		}
-	}
-
-	/* request reset pin */
-	sensor->rst_gpio = of_get_named_gpio(dev->of_node, "rst-gpios", 0);
-	if (!gpio_is_valid(sensor->rst_gpio))
-		dev_warn(dev, "No sensor reset pin available");
-	else {
-		retval = devm_gpio_request_one(dev, sensor->rst_gpio,
-				GPIOF_OUT_INIT_HIGH, "ov5640_mipi_reset");
-		if (retval < 0) {
-			dev_warn(dev, "Failed to set reset pin\n");
-			return retval;
-		}
-	}
-
-
-	sensor->sensor_clk = devm_clk_get(dev, "csi_mclk");
-	if (IS_ERR(sensor->sensor_clk)) {
-		/* assuming clock enabled by default */
-		sensor->sensor_clk = NULL;
-		dev_err(dev, "clock-frequency missing or invalid\n");
-		return PTR_ERR(sensor->sensor_clk);
-	}
-
 	int i;
 
 	for (i = 0; i <= cnt; i++) {
