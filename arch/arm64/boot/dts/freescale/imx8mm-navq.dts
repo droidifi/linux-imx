@@ -191,7 +191,7 @@
 };
 
 &usbotg2 {
-	 dr_mode = "host"; // the OTG mode doesn't work out of the box
+	 dr_mode = "otg"; // the OTG mode doesn't work out of the box
 	 vbus-supply = <&reg_usbotg_vcc>;
 	 picophy,pre-emp-curr-control = <3>;
 	 picophy,dc-vol-level-adjust = <7>;
@@ -208,7 +208,6 @@
 	pm-ignore-notify;
 	keep-power-in-suspend;
 	non-removable;
-	no-sd-uhs-sdr104;
 	status = "okay";
 };
 
