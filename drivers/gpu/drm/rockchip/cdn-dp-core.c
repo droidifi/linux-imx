@@ -424,6 +424,7 @@ static int cdn_dp_enable_phy(struct cdn_dp_device *dp, struct cdn_dp_port *port)
 
 	port->lanes = cdn_dp_get_port_lanes(port);
 	dp->mhdp.dp.num_lanes = port->lanes;
+
 	if (property.intval)
 		dp->mhdp.lane_mapping = LANE_MAPPING_FLIPPED;
 	else
