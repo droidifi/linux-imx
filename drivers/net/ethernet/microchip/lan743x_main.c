@@ -70,14 +70,47 @@ void lan743x_csr_write(struct lan743x_adapter *adapter, int offset,
 
 static int lan743x_csr_light_reset(struct lan743x_adapter *adapter)
 {
+	int ret;
 	u32 data;
 
 	data = lan743x_csr_read(adapter, HW_CFG);
-	data |= HW_CFG_LRST_;
+	data |= HW_CFG_LRST_ | HW_CFG_LED1_EN | HW_CFG_LED0_EN;
 	lan743x_csr_write(adapter, HW_CFG, data);
 
-	return readx_poll_timeout(LAN743X_CSR_READ_OP, HW_CFG, data,
+	ret = readx_poll_timeout(LAN743X_CSR_READ_OP, HW_CFG, data,
 				  !(data & HW_CFG_LRST_), 100000, 10000000);
+	data = lan743x_csr_read(adapter, HW_CFG);
+	data |= HW_CFG_LED1_EN | HW_CFG_LED0_EN;
+	lan743x_csr_write(adapter, HW_CFG, data);
+
+	data = lan743x_csr_read(adapter, PHY_LED_MODE);
+	data &= ~(PHY_LED_MODE_CFG_MASK(0) | PHY_LED_MODE_CFG_MASK(1));
+	data |= PHY_LED_MODE_CFG(0, 1) | PHY_LED_MODE_CFG(1, 0xa);
+
+/*
+ * 0 - gigabit/100 link/activity
+ * 1 - gigabit link/activity
+ * 2 - 100tx link/activity
+ * 3 - always off
+ * 4 - gigabit/100 link/activity
+ * 5 - gigabit link/activity
+ * 6 - 100 activity
+ * 7 - always off
+ * 8 - giga/100 link
+ * 9 - always off
+ * a - giga/100 activity
+ * b - always off
+ * c - always off
+ * d - always off
+ * e - always off
+ * f - always on
+ */
+	lan743x_csr_write(adapter, PHY_LED_MODE, data);
+
+	data = lan743x_csr_read(adapter, PHY_LED_BEHAVIOR);
+	data |= PHY_LED_BEHAVIOR_SEPARATE_LINK_LED1 | PHY_LED_BEHAVIOR_SEPARATE_LINK_LED0;
+	lan743x_csr_write(adapter, PHY_LED_BEHAVIOR, data);
+	return ret;
 }
 
 static int lan743x_csr_wait_for_bit(struct lan743x_adapter *adapter,
@@ -3024,6 +3057,7 @@ static const struct pci_device_id lan743x_pcidev_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_SMSC, PCI_DEVICE_ID_SMSC_LAN7431) },
 	{ 0, }
 };
+MODULE_DEVICE_TABLE(pci, lan743x_pcidev_tbl);
 
 static struct pci_driver lan743x_pcidev_driver = {
 	.name     = DRIVER_NAME,
